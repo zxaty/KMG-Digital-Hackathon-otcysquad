@@ -52,7 +52,7 @@ SKIP_APP_PREFIXES = (
 )
 EXCLUDE_DIR_PARTS = {
     "migrations", "licenses", ".venv", "venv", "node_modules",
-    "agent", "__pycache__", ".git", "runtime",
+    "agent", ".github", ".claude", "__pycache__", ".git", "runtime",
 }
 
 
@@ -341,7 +341,7 @@ class Indexer:
             "target": target,
             "is_class_based": is_cbv,
             "url_level_wrappers": wrappers,
-            "source_file": str(path.relative_to(self.root)),
+            "source_file": path.relative_to(self.root).as_posix(),
             "line": element.lineno,
             **view_info,
         }]
@@ -407,7 +407,7 @@ class Indexer:
                 return {
                     "view_module": module_dotted,
                     "view_function": func_name,
-                    "view_file": str(path.relative_to(self.root)) if path.exists() else str(path),
+                    "view_file": path.relative_to(self.root).as_posix() if path.exists() else path.as_posix(),
                     "view_line": node.lineno,
                     "decorators": decorators,
                     "body_guard_calls": guards,
@@ -500,8 +500,8 @@ class Indexer:
                         pii = any(hint in fname.lower() for hint in PII_NAME_HINTS)
                         fields.append({"name": fname, "type": ftype, "line": stmt.lineno, "pii_name_hint": pii})
                 models_out.append({
-                    "app_dir": str(app_dir.relative_to(self.root)),
-                    "file": str(models_file.relative_to(self.root)),
+                    "app_dir": app_dir.relative_to(self.root).as_posix(),
+                    "file": models_file.relative_to(self.root).as_posix(),
                     "class_name": node.name,
                     "bases": base_names,
                     "line": node.lineno,
@@ -582,7 +582,7 @@ class Indexer:
                                     looks_like_queryset = True
                                     traced_from = next(c for c in candidates if self._looks_like_queryset_source(c))
                     hits.append({
-                        "file": str(path.relative_to(self.root)),
+                        "file": path.relative_to(self.root).as_posix(),
                         "line": node.lineno,
                         "method": node.func.attr,
                         "receiver_source": receiver_src,
@@ -612,9 +612,9 @@ class Indexer:
                                 val, ok = literal_or_source(cmp_node)
                                 if ok:
                                     allowed = val
-                        return {"resolved": True, "file": str(path.relative_to(self.root)), "line": sub.lineno,
+                        return {"resolved": True, "file": path.relative_to(self.root).as_posix(), "line": sub.lineno,
                                 "source": self._safe_unparse(sub), "allowed_app_labels": allowed}
-                return {"resolved": True, "file": str(path.relative_to(self.root)), "line": node.lineno,
+                return {"resolved": True, "file": path.relative_to(self.root).as_posix(), "line": node.lineno,
                         "allowed_app_labels": None,
                         "note": "no app_label filter found in handler body; handler applies unconditionally to every sender"}
         return {"resolved": False, "reason": f"function {func_name} not found in {module_dotted}"}
@@ -649,7 +649,7 @@ class Indexer:
                             v, _ = literal_or_source(kw.value)
                             dispatch_uid = v
                     connections.append({
-                        "file": str(apps_py.relative_to(self.root)),
+                        "file": apps_py.relative_to(self.root).as_posix(),
                         "line": node.lineno,
                         "signal": signal_name,
                         "handler": handler,
@@ -751,16 +751,16 @@ class Indexer:
                         isinstance(sub, ast.Dict) and any(isinstance(k, ast.Constant) and k.value == "exp" for k in sub.keys)
                         for sub in ast.walk(node)
                     )
-                    result["issuers"].append({"function": node.name, "file": str(path.relative_to(self.root)), "line": node.lineno, "embeds_exp_claim": embeds_exp})
+                    result["issuers"].append({"function": node.name, "file": path.relative_to(self.root).as_posix(), "line": node.lineno, "embeds_exp_claim": embeds_exp})
                 if any(c.endswith("signing.loads") for c in calls):
                     checks_exp = any(
                         isinstance(sub, (ast.Subscript, ast.Call)) and ("'exp'" in self._safe_unparse(sub) or '"exp"' in self._safe_unparse(sub))
                         for sub in ast.walk(node)
                     )
-                    result["validators"].append({"function": node.name, "file": str(path.relative_to(self.root)), "line": node.lineno, "checks_exp_claim": checks_exp})
+                    result["validators"].append({"function": node.name, "file": path.relative_to(self.root).as_posix(), "line": node.lineno, "checks_exp_claim": checks_exp})
                 if any(hint in node.name.lower() for hint in change_name_hints):
                     hits = sorted({c for c in calls if any(h in c.lower() for h in revocation_hints)})
-                    result["role_or_password_change_functions"].append({"function": node.name, "file": str(path.relative_to(self.root)), "line": node.lineno, "revocation_related_calls": hits})
+                    result["role_or_password_change_functions"].append({"function": node.name, "file": path.relative_to(self.root).as_posix(), "line": node.lineno, "revocation_related_calls": hits})
         return result
 
     # ---------- check 5: failed-login throttling ----------
@@ -798,7 +798,7 @@ class Indexer:
                 continue
             for lineno, line in enumerate(lines, start=1):
                 if self.PASSWORD_REUSE_RE.search(line):
-                    reuse_hits.append({"file": str(path.relative_to(self.root)), "line": lineno, "text": line.strip()})
+                    reuse_hits.append({"file": path.relative_to(self.root).as_posix(), "line": lineno, "text": line.strip()})
         return {
             "configured_validators": names,
             "resolved_statically": entry.get("resolved", False),
@@ -853,14 +853,14 @@ class Indexer:
                 if isinstance(node, ast.Assign):
                     for target in node.targets:
                         if isinstance(target, ast.Attribute) and target.attr == "password":
-                            hits.append({"file": str(path.relative_to(self.root)), "line": node.lineno,
+                            hits.append({"file": path.relative_to(self.root).as_posix(), "line": node.lineno,
                                          "kind": "direct_attribute_assign", "source": self._safe_unparse(node)})
                 if isinstance(node, ast.Call):
                     func_src = self._safe_unparse(node.func)
                     if func_src.endswith(".objects.create"):
                         for kw in node.keywords:
                             if kw.arg == "password":
-                                hits.append({"file": str(path.relative_to(self.root)), "line": node.lineno,
+                                hits.append({"file": path.relative_to(self.root).as_posix(), "line": node.lineno,
                                              "kind": "objects.create(password=...)", "source": self._safe_unparse(node)})
         return hits
 
@@ -901,8 +901,8 @@ class Indexer:
         lines_by_file: dict[str, list[str]] = {}
         for f in doc_files:
             try:
-                lines_by_file[str(f.relative_to(self.root))] = f.read_text(encoding="utf-8", errors="ignore").splitlines()
-                searched.append(str(f.relative_to(self.root)))
+                lines_by_file[f.relative_to(self.root).as_posix()] = f.read_text(encoding="utf-8", errors="ignore").splitlines()
+                searched.append(f.relative_to(self.root).as_posix())
             except Exception as exc:
                 self.note("regulatory-references", f"failed to read {f}: {exc}")
         if not searched:
@@ -970,7 +970,7 @@ class Indexer:
                         snippet = ast.get_source_segment(source, node)
                     except Exception:
                         snippet = None
-                    out[name] = {"file": str(path.relative_to(self.root)), "line": node.lineno, "source": snippet}
+                    out[name] = {"file": path.relative_to(self.root).as_posix(), "line": node.lineno, "source": snippet}
                     # one more hop: guard-like calls made from inside this
                     # guard's own body (e.g. admin_required -> administrator())
                     for sub in ast.walk(node):

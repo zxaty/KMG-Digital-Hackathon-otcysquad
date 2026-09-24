@@ -39,6 +39,9 @@ live API. That is the one part of module 3 not yet proven end-to-end.
 from __future__ import annotations
 
 import json
+import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -128,6 +131,57 @@ class AnthropicClient:
             messages=[{"role": "user", "content": user_prompt}],
         )
         return "".join(block.text for block in response.content if block.type == "text")
+
+
+class DeepSeekClient:
+    """Minimal OpenAI-compatible DeepSeek client with aggregate usage metrics."""
+
+    def __init__(self, model: str = "deepseek-chat", api_key: str | None = None,
+                 max_tokens: int = 4096, base_url: str = "https://api.deepseek.com"):
+        key = api_key or os.environ.get("LLM_API_KEY")
+        if not key:
+            raise RuntimeError("LLM_API_KEY is not set")
+        self.api_key = key
+        self.model = model
+        self.max_tokens = max_tokens
+        self.base_url = base_url.rstrip("/")
+        self.calls = 0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        body = json.dumps({
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions", data=body, method="POST",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"DeepSeek API returned HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"DeepSeek API request failed: {exc.reason}") from exc
+        self.calls += 1
+        usage = payload.get("usage") or {}
+        self.prompt_tokens += int(usage.get("prompt_tokens") or 0)
+        self.completion_tokens += int(usage.get("completion_tokens") or 0)
+        self.total_tokens += int(usage.get("total_tokens") or 0)
+        try:
+            return payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("DeepSeek API response contained no assistant content") from exc
 
 
 # ---------------------------------------------------------------------------

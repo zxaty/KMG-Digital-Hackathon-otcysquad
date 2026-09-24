@@ -66,9 +66,9 @@ def _resolve_module_file(index: dict, dotted: str) -> str | None:
         for p in (candidate.with_suffix(".py"), candidate / "__init__.py"):
             if p.is_file():
                 try:
-                    return str(p.relative_to(root_path))
+                    return p.relative_to(root_path).as_posix()
                 except ValueError:
-                    return str(p)
+                    return p.as_posix()
     return None
 
 
