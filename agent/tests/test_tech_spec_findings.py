@@ -73,9 +73,9 @@ class TechSpecFindingsAgainstRealProjectTests(unittest.TestCase):
         self.assertEqual(f["location"]["line"], self.index["settings"]["AUTH_PASSWORD_VALIDATORS"]["line"])
         self.assertIn("4.4.8", f["description"])
         # all three missing behaviors named in the one combined description
-        self.assertIn("common", f["description"].lower())
-        self.assertIn("numeric", f["description"].lower())
-        self.assertIn("reuse", f["description"].lower())
+        self.assertIn("распространённых", f["description"].lower())
+        self.assertIn("числовых", f["description"].lower())
+        self.assertIn("повторного использования", f["description"].lower())
 
     def test_password_validator_finding_absent_when_all_covered(self):
         fake_index = {"password_validators": {
@@ -96,9 +96,9 @@ class TechSpecFindingsAgainstRealProjectTests(unittest.TestCase):
         findings = tsf.find_incomplete_password_validators(fake_index)
         self.assertEqual(len(findings), 1)
         desc = findings[0]["description"].lower()
-        self.assertNotIn("common/well-known", desc)
-        self.assertIn("numeric", desc)
-        self.assertIn("reuse", desc)
+        self.assertNotIn("распространённых", desc)
+        self.assertIn("числовых", desc)
+        self.assertIn("повторного использования", desc)
 
     # ---------- check 3: token revocation ----------
 

@@ -1,0 +1,161 @@
+# IB security check (module 1: CI/CD integration) — ТЗ §4.3, docs 05-agent-architecture.md
+#
+# Runs agent/main.py over the WHOLE checked-out tree of the pushed commit
+# (never a diff, ТЗ §4.4.1), publishes report.json/report.md as a build
+# artifact regardless of outcome (§4.3.4) and turns the agent's exit code into
+# the job result: 0 → pass, 1 → violations (block), 2 → agent failed (block).
+#
+# Hardening — per GitHub Docs "Security hardening for GitHub Actions" and the
+# GitHub Security Lab series "Keeping your GitHub Actions and workflows secure"
+# (Part 1: preventing pwn requests, Part 2: untrusted input, Part 3: how to
+# trust your building blocks):
+#
+#  1. Every action is pinned to a full 40-char commit SHA (tag in the trailing
+#     comment). Tags like @v7 are mutable: whoever controls (or compromises) the
+#     action repo can repoint them, and a short ref can even resolve to an
+#     "imposter commit" from a fork. A full SHA is the only immutable reference.
+#
+#  2. Least-privilege GITHUB_TOKEN: `permissions: {}` at workflow level, then
+#     only `contents: read` for the job (checkout). The agent is a checker and
+#     must never modify the target repo (ТЗ §4.1.5), so no write scopes at all.
+#     upload-artifact authenticates with the runner's own artifact token and
+#     needs no GITHUB_TOKEN scope. checkout runs with persist-credentials: false
+#     so the token is not left in .git/config for the agent (or anything the
+#     target project ships) to read.
+#
+#  3. No `${{ }}` expression is ever interpolated inside a `run:` script. Every
+#     value a script needs arrives via `env:` and is referenced as a quoted
+#     shell variable ("$VAR"), so no context value (commit message, branch
+#     name, PR title…) can become shell syntax — the "untrusted input" /
+#     script-injection class from Part 2. Expressions only appear in `with:`,
+#     `if:` and `env:`, where they are data, not code.
+#
+#  4. Trigger is `push` (plus manual `workflow_dispatch`) — NOT
+#     `pull_request_target`. pull_request_target runs with the base repo's
+#     secrets and a write token; combined with a checkout of fork code it is the
+#     "pwn request" pattern from Part 1. On `push` the code under test is
+#     already in this repo, and secrets only reach commits pushed by people
+#     with write access. OPEN QUESTION (docs/01 "Constraints to confirm"): if
+#     the organizer's pipeline expects PR gating, add plain `pull_request`
+#     (no secrets for forks → agent exits 2 there), never pull_request_target.
+#
+#  5. `continue-on-error: true` on the agent step so the artifact-publish and
+#     summary steps still run on exit 1/2 (ТЗ §4.3.4 — report available
+#     regardless of result). The last step re-raises the real exit code, so
+#     the job still fails and blocks the pipeline; the IB check itself is
+#     never allowed to "silently pass".
+#
+#  6. The API key is an *environment* secret (Settings → Environments →
+#     ib-check), not a repo-wide one: any workflow on any branch can read a
+#     repo secret, an environment secret only reaches jobs that pass the
+#     environment's deployment-branch / reviewer rules.
+#
+# LLM configuration (Settings → Environments → ib-check):
+#   secret   LLM_API_KEY                   — required unless LLM_PROVIDER=none
+#   variable LLM_PROVIDER (default deepseek), LLM_MODEL, LLM_BASE_URL — optional
+# A missing key is an agent failure (exit 2), not a silent rules-only pass.
+
+name: ib-security-check
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ib-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ib-check:
+    name: IB requirements check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    # LLM_API_KEY lives in this environment, not as a repo-wide secret, so it
+    # can be scoped with deployment-branch rules (zizmor: secrets-outside-env).
+    environment: ib-check
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the commit under test (full tree)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Depth 1 still checks out the complete working tree; the agent
+          # reads the tree, not history (it takes the commit from GITHUB_SHA).
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+        # The agent is stdlib-only: no pip install, no dependency cache.
+
+      - name: Run IB agent
+        id: agent
+        continue-on-error: true
+        # ТЗ §4.7.1: step limit 30 min; the agent's own deadline (25 min)
+        # fires first and still produces a partial report (§4.7.2).
+        timeout-minutes: 30
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'deepseek' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          PYTHONUNBUFFERED: "1"
+          PYTHONIOENCODING: utf-8
+        run: |
+          set +e
+          python agent/main.py \
+            --project-root . \
+            --out-json report.json \
+            --out-md report.md \
+            --deadline-minutes 25 2>&1 | tee agent-step.log
+          code=${PIPESTATUS[0]}
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          echo "Agent exit code: ${code}"
+          exit "${code}"
+
+      - name: Publish report artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ib-security-report-${{ github.sha }}
+          path: |
+            report.json
+            report.md
+            agent-step.log
+          # Exit 2 legitimately produces no report (ТЗ §4.7.3); the log still uploads.
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Job summary when no report was produced
+        if: ${{ !cancelled() }}
+        env:
+          AGENT_EXIT: ${{ steps.agent.outputs.exit_code }}
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          # On exit 0/1 agent/main.py already wrote the full summary itself.
+          if [ -f report.json ]; then
+            exit 0
+          fi
+          {
+            echo "## Проверка требований ИБ — отчёт не сформирован"
+            echo ""
+            echo "- Коммит: \`${COMMIT_SHA}\`"
+            echo "- Код завершения агента: \`${AGENT_EXIT:-нет (шаг прерван, outcome=${AGENT_OUTCOME})}\`"
+            echo "- Проверка не выполнена (ТЗ §4.7.3) — пайплайн блокируется. Подробности в agent-step.log (артефакт)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Block pipeline on violations or agent failure
+        if: ${{ !cancelled() && steps.agent.outcome != 'success' }}
+        env:
+          AGENT_EXIT: ${{ steps.agent.outputs.exit_code }}
+        run: |
+          case "${AGENT_EXIT}" in
+            1) echo "::error::Выявлены нарушения Требований ИБ (код 1) — слияние/развёртывание блокируется"; exit 1 ;;
+            2) echo "::error::Агент не завершил проверку (код 2) — пайплайн блокируется"; exit 2 ;;
+            *) echo "::error::Шаг агента прерван без кода завершения (таймаут/сбой раннера) — считается кодом 2"; exit 2 ;;
+          esac

@@ -1,0 +1,8 @@
+{
+  "http_port": 8086,
+  "https_port": 8446,
+  "backend_port": 8096,
+  "minimum_tls": "TLSv1_2",
+  "ciphers": "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-CHACHA20-POLY1305",
+  "http_redirect": true
+}

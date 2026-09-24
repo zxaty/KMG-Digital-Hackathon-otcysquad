@@ -1,0 +1,16 @@
+# Line endings for OUR files only (agent, CI, agent docs): LF everywhere,
+# overriding core.autocrlf. Target-project files are deliberately left out:
+# their committed blobs already contain CRLF, and normalizing them would
+# rewrite ~440 target files (ТЗ §4.1.5 — the agent never modifies the target).
+# So everything is `-text` (bytes kept exactly as committed, no conversion)
+# and only our own paths opt back in to LF normalization below.
+* -text
+/agent/** text=auto eol=lf
+/.github/** text=auto eol=lf
+/.claude/** text=auto eol=lf
+/.gitattributes text eol=lf
+/.gitignore text eol=lf
+
+*.docx binary
+*.zip binary
+*.pyc binary

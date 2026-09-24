@@ -19,6 +19,7 @@ it would need --break-system-packages), so unittest was used instead to
 avoid adding a dependency that might not be reliably available in CI.
 """
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -52,7 +53,7 @@ class IndexerAgainstRealProjectTests(unittest.TestCase):
             "bulk_orm_calls", "signal_wiring", "model_audit_coverage",
             "log_protection", "token_lifecycle", "login_throttling",
             "password_validators", "auxiliary_configs", "password_bypass_writes",
-            "regulatory_references", "notes",
+            "regulatory_references", "notes", "inventory",
         }
         self.assertEqual(expected, set(self.index.keys()))
 
@@ -217,6 +218,22 @@ class IndexerAgainstRealProjectTests(unittest.TestCase):
         self.assertFalse(pv["covers_common_password_rejection"])
         self.assertFalse(pv["covers_all_numeric_rejection"])
         self.assertFalse(pv["covers_password_reuse_block"])
+
+
+class AgentOwnFilesExcludedTests(unittest.TestCase):
+    """The agent's own CI workflow must not be inventoried as target input,
+    while the target project's own workflows must be."""
+
+    def test_own_workflow_skipped_target_workflow_kept_as_ci(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = Path(tmp) / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (wf / "ib-check.yml").write_text("name: ib-security-check\n", encoding="utf-8")
+            (wf / "deploy.yml").write_text("name: deploy\n", encoding="utf-8")
+            files = {f["path"]: f for f in Indexer(Path(tmp)).index_inventory()["files"]}
+        self.assertNotIn(".github/workflows/ib-check.yml", files)
+        self.assertIn(".github/workflows/deploy.yml", files)
+        self.assertEqual(files[".github/workflows/deploy.yml"]["category"], "ci")
 
 
 if __name__ == "__main__":

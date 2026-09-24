@@ -66,9 +66,9 @@ def _resolve_module_file(index: dict, dotted: str) -> str | None:
         for p in (candidate.with_suffix(".py"), candidate / "__init__.py"):
             if p.is_file():
                 try:
-                    return str(p.relative_to(root_path))
+                    return p.relative_to(root_path).as_posix()
                 except ValueError:
-                    return str(p)
+                    return p.as_posix()
     return None
 
 
@@ -95,13 +95,16 @@ def find_missing_login_throttling(index: dict) -> list[dict]:
     apps = lt.get("searched_installed_apps", [])
     middleware = lt.get("searched_middleware", [])
     description = (
-        "No failed-login throttling/lockout mechanism found (Tech Spec Sec.4.4.6). "
-        f"Searched all {len(apps)} INSTALLED_APPS entries and all {len(middleware)} MIDDLEWARE "
-        "entries for anything matching axes/ratelimit/defender/lockout/throttl/brute - none "
-        "present. Add a rate-limiting/lockout mechanism (e.g. django-axes) or equivalent."
+        "Не найден механизм ограничения неуспешных попыток входа и временной блокировки (ТС 4.4.6: "
+        "не более 5 попыток для учётной записи и ограничение по источнику в течение 15 минут, с "
+        "сохранением при перезапуске). Проверены все "
+        f"{len(apps)} элементов INSTALLED_APPS и {len(middleware)} элементов MIDDLEWARE на "
+        "axes/ratelimit/defender/lockout/throttl/brute — совпадений нет. Рекомендация: подключить "
+        "django-axes или аналогичный серверный механизм с хранением счётчиков в БД."
     )
     return [{
         "category": "session-auth-detail",
+        "severity": "medium",
         "description": description,
         "location": _settings_location(index, "INSTALLED_APPS"),
     }]
@@ -117,20 +120,22 @@ def find_incomplete_password_validators(index: dict) -> list[dict]:
     pv = index.get("password_validators", {})
     missing = []
     if not pv.get("covers_common_password_rejection"):
-        missing.append("rejection of common/well-known passwords")
+        missing.append("отклонение распространённых паролей (CommonPasswordValidator)")
     if not pv.get("covers_all_numeric_rejection"):
-        missing.append("rejection of all-numeric passwords")
+        missing.append("отклонение полностью числовых паролей (NumericPasswordValidator)")
     if not pv.get("covers_password_reuse_block"):
-        missing.append("blocking reuse of a previous password")
+        missing.append("запрет повторного использования прежнего пароля")
     if not missing:
         return []
-    configured = ", ".join(pv.get("configured_validators", [])) or "none"
+    configured = ", ".join(pv.get("configured_validators", [])) or "нет"
     description = (
-        "AUTH_PASSWORD_VALIDATORS does not cover all password-policy behaviors required by "
-        f"Tech Spec Sec.4.4.8: missing {', '.join(missing)}. Currently configured: {configured}."
+        "AUTH_PASSWORD_VALIDATORS не обеспечивает парольную политику ТС 4.4.8 (и 4.4.8: смена и "
+        f"сброс пароля должны препятствовать использованию старых данных): отсутствует {'; '.join(missing)}. "
+        f"Сейчас настроено: {configured}."
     )
     return [{
         "category": "session-auth-detail",
+        "severity": "medium",
         "description": description,
         "location": _settings_location(index, "AUTH_PASSWORD_VALIDATORS"),
     }]
@@ -149,10 +154,11 @@ def find_missing_token_revocation(index: dict) -> list[dict]:
             continue
         findings.append({
             "category": "session-auth-detail",
+            "severity": "medium",
             "description": (
-                f"`{entry['function']}` changes a user's role or password but performs no "
-                "token/session revocation (Tech Spec Sec.4.4.7) - any previously issued API "
-                "token or session for that user remains valid after the change."
+                f"`{entry['function']}` изменяет роль или пароль пользователя, но не отзывает ранее "
+                "выданные токены доступа и сессии (ТС 4.4.7, 4.3.5): токен API, выданный до изменения, "
+                "продолжает действовать до истечения срока."
             ),
             "location": {"file": entry["file"], "line": entry["line"]},
         })

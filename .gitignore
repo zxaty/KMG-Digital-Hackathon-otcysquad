@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+runtime/
+# выходные файлы агента в корне; образцы в agent/reports/ — в репозитории
+/report.json
+/report.md
+/agent-step.log

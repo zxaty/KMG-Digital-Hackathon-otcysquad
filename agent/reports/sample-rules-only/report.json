@@ -1,0 +1,992 @@
+{
+  "meta": {
+    "commit": "576e58100d7ef832cef2ad3ec73fc89ab98f84b5",
+    "branch": "main",
+    "started_at": "2026-09-24T14:30:21+05:00",
+    "finished_at": "2026-09-24T14:30:23+05:00",
+    "duration_seconds": 2,
+    "deadline_seconds": 1500,
+    "timed_out": false,
+    "agent": "otcysquad IB-check agent",
+    "agent_version": "1.0.1",
+    "model": "не используется (только правила)",
+    "analysis_mode": "rules-only",
+    "project_root": "<тестовый проект AlmasNUR/KMG-Digital-Hackathon>",
+    "project_files_total": 453,
+    "project_files_by_category": {
+      "docs": {
+        "files": 30,
+        "bytes": 199587
+      },
+      "code": {
+        "files": 79,
+        "bytes": 490280
+      },
+      "other": {
+        "files": 30,
+        "bytes": 148618
+      },
+      "config": {
+        "files": 70,
+        "bytes": 722422
+      },
+      "static": {
+        "files": 88,
+        "bytes": 1989721
+      },
+      "templates": {
+        "files": 99,
+        "bytes": 277192
+      },
+      "dependencies": {
+        "files": 2,
+        "bytes": 765
+      },
+      "locale": {
+        "files": 54,
+        "bytes": 2664611
+      },
+      "shell": {
+        "files": 1,
+        "bytes": 443
+      }
+    }
+  },
+  "summary": {
+    "overall_result": "fail",
+    "exit_code": 1,
+    "violations_count": 18,
+    "violations_by_severity": {
+      "critical": 3,
+      "high": 13,
+      "medium": 2,
+      "low": 0
+    },
+    "requirements_failed": [
+      "ИБ-01",
+      "ИБ-02",
+      "ИБ-03",
+      "ИБ-04",
+      "ИБ-05",
+      "ИБ-07",
+      "ИБ-08"
+    ],
+    "requirements_status": {
+      "IB-01": "violation",
+      "IB-02": "violation",
+      "IB-03": "violation",
+      "IB-04": "violation",
+      "IB-05": "violation",
+      "IB-06": "pass",
+      "IB-07": "violation",
+      "IB-08": "violation"
+    },
+    "requirements": [
+      {
+        "id": "IB-01",
+        "display_id": "ИБ-01",
+        "title": "Разграничение доступа к административному функционалу",
+        "text": "Доступ к административному интерфейсу должен предоставляться исключительно пользователям с ролью «администратор». Проверка роли должна выполняться на стороне сервера при каждом обращении. Сокрытие элементов административного интерфейса на стороне клиента не является выполнением настоящего требования.",
+        "status": "violation",
+        "status_ru": "нарушение",
+        "violations_count": 2,
+        "summary": "LLM не использовалась: применены только детерминированные правила (перечень проверенного — ниже).",
+        "insufficient_data_reason": null,
+        "checked": [
+          "проверено маршрутов: 22, из них административных по назначению: 5"
+        ],
+        "checked_files": [],
+        "analysis_mode": "rules-only",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      },
+      {
+        "id": "IB-02",
+        "display_id": "ИБ-02",
+        "title": "Проверка сессии и токена на стороне сервера",
+        "text": "Валидность сессии и (или) токена должна проверяться на стороне сервера при каждом обращении к защищённым конечным точкам, включая программные интерфейсы (API).",
+        "status": "violation",
+        "status_ru": "нарушение",
+        "violations_count": 2,
+        "summary": "LLM не использовалась: применены только детерминированные правила (перечень проверенного — ниже).",
+        "insufficient_data_reason": null,
+        "checked": [
+          "проверено маршрутов на наличие серверной проверки сессии/токена: 22"
+        ],
+        "checked_files": [],
+        "analysis_mode": "rules-only",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      },
+      {
+        "id": "IB-03",
+        "display_id": "ИБ-03",
+        "title": "Защита канала передачи данных",
+        "text": "Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.",
+        "status": "violation",
+        "status_ru": "нарушение",
+        "violations_count": 6,
+        "summary": "LLM не использовалась: применены только детерминированные правила (перечень проверенного — ниже).",
+        "insufficient_data_reason": null,
+        "checked": [
+          "флаги SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE, SECURE_SSL_REDIRECT, SECURE_HSTS_SECONDS в settings",
+          "конфигурация транспортного модуля proxy.json: версия TLS, шифронаборы, перенаправление HTTP"
+        ],
+        "checked_files": [],
+        "analysis_mode": "rules-only",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      },
+      {
+        "id": "IB-04",
+        "display_id": "ИБ-04",
+        "title": "Криптографическая защита персональных данных при хранении",
+        "text": "Персональные данные (фамилия, имя, отчество, логин, адрес электронной почты, пароль) должны храниться с применением криптографической защиты с параметрами не ниже уровня, установленного СТ РК 1073-2007. Пароли должны храниться в виде значений функций формирования ключа bcrypt, argon2 или scrypt. Хранение паролей в открытом виде, а равно с применением быстрых хеш-функций общего назначения без адаптивного алгоритма, является нарушением.",
+        "status": "violation",
+        "status_ru": "нарушение",
+        "violations_count": 1,
+        "summary": "LLM не использовалась: применены только детерминированные правила (перечень проверенного — ниже).",
+        "insufficient_data_reason": null,
+        "checked": [
+          "основной хешер паролей portal.hashers.PasswordHasher: PasswordHasher наследует Argon2PasswordHasher",
+          "модель пользователя portal.User: поля ПД ['username', 'first_name', 'last_name', 'middle_name', 'email']"
+        ],
+        "checked_files": [],
+        "analysis_mode": "rules-only",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      },
+      {
+        "id": "IB-05",
+        "display_id": "ИБ-05",
+        "title": "Защита локальных журналов приложения",
+        "text": "Локальные журналы приложения должны храниться в зашифрованном виде и быть защищены от модификации пользователем до момента их отправки на сервер.",
+        "status": "violation",
+        "status_ru": "нарушение",
+        "violations_count": 2,
+        "summary": "LLM не использовалась: применены только детерминированные правила (перечень проверенного — ниже).",
+        "insufficient_data_reason": null,
+        "checked": [
+          "функции записи журнала: [('portal/audit.py', 8)]",
+          "настройка прав доступа к рабочему каталогу: 5 вызовов set_reader_access"
+        ],
+        "checked_files": [],
+        "analysis_mode": "rules-only",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      },
+      {
+        "id": "IB-06",
+        "display_id": "ИБ-06",
+        "title": "Ссылки на нормативную базу в документации проекта",
+        "text": "Документация проекта (README, техническое задание) должна содержать ссылки на акты и стандарты, перечисленные в пункте 3.1 Технического задания. Настоящее требование не предполагает фактической сертификации и считается выполненным при наличии соответствующих ссылок в документации.",
+        "status": "pass",
+        "status_ru": "соответствует",
+        "violations_count": 0,
+        "summary": "Все 6 требуемых ссылок на нормативные акты найдены в README.md, docs/Состав_сдаваемых_материалов.txt. Документы docx: docs/ТЗ_Хакатон.docx — все 6 ссылок присутствуют; docs/Техническая_спецификация_ИС_обработки_обращений_КМГ.docx — все 6 ссылок присутствуют.",
+        "insufficient_data_reason": null,
+        "checked": [
+          "README/текстовые документы: README.md, docs/Состав_сдаваемых_материалов.txt",
+          "docs/ТЗ_Хакатон.docx: 157 абзацев, гиперссылок: 0",
+          "docs/Техническая_спецификация_ИС_обработки_обращений_КМГ.docx: 265 абзацев, гиперссылок: 0"
+        ],
+        "checked_files": [
+          "README.md",
+          "docs/Состав_сдаваемых_материалов.txt",
+          "docs/ТЗ_Хакатон.docx",
+          "docs/Техническая_спецификация_ИС_обработки_обращений_КМГ.docx"
+        ],
+        "analysis_mode": "deterministic",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      },
+      {
+        "id": "IB-07",
+        "display_id": "ИБ-07",
+        "title": "Журналирование действий пользователей и событий СУБД (сквозное требование)",
+        "text": "В проекте должен быть реализован единый журнал действий пользователей, имеющих доступ к данным, а также журнал событий системы управления базами данных. Журналирование должно охватывать проект в целом, а не отдельную функцию или отдельный программный модуль. Реализация журналирования в части функций, обеспечивающих доступ к данным, при отсутствии его в остальных, является нарушением.",
+        "status": "violation",
+        "status_ru": "нарушение",
+        "violations_count": 4,
+        "summary": "LLM не использовалась: применены только детерминированные правила (перечень проверенного — ниже).",
+        "insufficient_data_reason": null,
+        "checked": [
+          "сигналы аудита: ['m2m_changed', 'post_delete', 'post_save', 'user_logged_in', 'user_logged_out', 'user_login_failed']; функции записи журнала: ['portal.audit.record']; журналирующий middleware: нет",
+          "признаки журнала событий СУБД: не найдены; логгер django.db с обработчиком: нет"
+        ],
+        "checked_files": [],
+        "analysis_mode": "rules-only",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      },
+      {
+        "id": "IB-08",
+        "display_id": "ИБ-08",
+        "title": "Контроль выгрузки персональных данных",
+        "text": "Выгрузка данных, содержащих персональные сведения, должна быть доступна исключительно пользователям с ролью «администратор». Каждый факт выгрузки должен фиксироваться записью в журнале аудита. Отсутствие проверки роли либо отсутствие записи в журнале аудита при выполнении выгрузки является нарушением.",
+        "status": "violation",
+        "status_ru": "нарушение",
+        "violations_count": 1,
+        "summary": "LLM не использовалась: применены только детерминированные правила (перечень проверенного — ниже).",
+        "insufficient_data_reason": null,
+        "checked": [
+          "маршрутов выгрузки/скачивания данных: 2 (exports/people.csv, exports/people.json)"
+        ],
+        "checked_files": [],
+        "analysis_mode": "rules-only",
+        "llm_rounds": 0,
+        "rejected_model_candidates": 0
+      }
+    ],
+    "additional_findings_count": 15
+  },
+  "violations": [
+    {
+      "id": "ИБ-01-213af066",
+      "requirement_id": "IB-01",
+      "requirement_display_id": "ИБ-01",
+      "requirement_title": "Разграничение доступа к административному функционалу",
+      "requirement_text": "Доступ к административному интерфейсу должен предоставляться исключительно пользователям с ролью «администратор». Проверка роли должна выполняться на стороне сервера при каждом обращении. Сокрытие элементов административного интерфейса на стороне клиента не является выполнением настоящего требования.",
+      "location": {
+        "file": "portal/access.py",
+        "line": 18,
+        "function": "manage_required"
+      },
+      "related_locations": [
+        {
+          "file": "portal/views.py",
+          "line": 102,
+          "function": "manage",
+          "pattern": "manage/"
+        },
+        {
+          "file": "portal/views.py",
+          "line": 115,
+          "function": "change_role",
+          "pattern": "manage/users/<int:user_id>/role/"
+        },
+        {
+          "file": "portal/views.py",
+          "line": 127,
+          "function": "grant_queue",
+          "pattern": "manage/users/<int:user_id>/queue/"
+        },
+        {
+          "file": "portal/views.py",
+          "line": 135,
+          "function": "reset_password",
+          "pattern": "manage/users/<int:user_id>/password/"
+        }
+      ],
+      "evidence": "def manage_required(view):\n    @login_required\n    @wraps(view)\n    def wrapped(request, *args, **kwargs):\n        if not request.user.is_staff: raise PermissionDenied\n        return view(request, *args, **kwargs)\n    return wrapped",
+      "justification": "Защитный механизм `manage_required` ограничивает административные маршруты (manage/, manage/users/<int:user_id>/role/, manage/users/<int:user_id>/queue/, manage/users/<int:user_id>/password/) по техническому признаку учётной записи (is_staff/is_superuser), а не по роли «администратор». Признак is_staff в проекте присваивается и операторам (см. создание/смену роли пользователя), поэтому оператор получает доступ к административному интерфейсу: видит справочник всех пользователей с ПД, может менять роли (в т.ч. назначить себя администратором), выдавать права на очереди и сбрасывать чужие пароли. ТС 4.3.2 прямо запрещает предоставлять административные полномочия по техническим признакам платформы.",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Заменить проверку is_staff на проверку роли: использовать тот же механизм, что и в admin_required (role == 'administrator'), для всех административных маршрутов, включая API управления очередями.",
+      "source": "rule:ib01.admin_guard_checks_technical_flag",
+      "spec_refs": [
+        "ТЗ 4.5.1",
+        "ТС 4.3.2",
+        "ТС 1.11"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-01-4f744fec",
+      "requirement_id": "IB-01",
+      "requirement_display_id": "ИБ-01",
+      "requirement_title": "Разграничение доступа к административному функционалу",
+      "requirement_text": "Доступ к административному интерфейсу должен предоставляться исключительно пользователям с ролью «администратор». Проверка роли должна выполняться на стороне сервера при каждом обращении. Сокрытие элементов административного интерфейса на стороне клиента не является выполнением настоящего требования.",
+      "location": {
+        "file": "portal/views.py",
+        "line": 209,
+        "function": "queue_api"
+      },
+      "related_locations": [],
+      "evidence": "@login_required\n@require_POST\ndef queue_api(request, queue_id):\n    queue = get_object_or_404(Queue,pk=queue_id)\n    try:\n        data = json.loads(request.body)\n        title = str(data['title']).strip()\n        if not title or len(title)>100: raise ValueError\n    except (ValueError, KeyError): return JsonResponse({'error':'invalid title'},status=400)\n    queue.title = title\n    queue.save()\n    return JsonResponse({'id':queue.pk,'title':queue.title})",
+      "justification": "Маршрут `api/manage/queues/<int:queue_id>/` (queue_api) относится к административным функциям (управление пользователями/ролями/очередями/настройками), но доступен только с проверкой аутентификации (login_required/токен) — роль «администратор» на сервере не проверяется. Декораторы/обёртки: login_required, require_POST.",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Применить к представлению серверную проверку роли администратора (единый декоратор, проверяющий request.user.role == 'administrator' на каждом запросе) до чтения и изменения данных.",
+      "source": "rule:ib01.admin_route_without_role_check",
+      "spec_refs": [
+        "ТЗ 4.5.1",
+        "ТС 4.3.2",
+        "ТС 4.3.3"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-02-edc0169f",
+      "requirement_id": "IB-02",
+      "requirement_display_id": "ИБ-02",
+      "requirement_title": "Проверка сессии и токена на стороне сервера",
+      "requirement_text": "Валидность сессии и (или) токена должна проверяться на стороне сервера при каждом обращении к защищённым конечным точкам, включая программные интерфейсы (API).",
+      "location": {
+        "file": "portal/views.py",
+        "line": 202,
+        "function": "catalog_api"
+      },
+      "related_locations": [],
+      "evidence": "@require_GET\ndef catalog_api(request):\n    rows = list(Ticket.objects.all())\n\n    return JsonResponse({'tickets':[serialize_ticket(t) for t in rows]})",
+      "justification": "Конечная точка `api/catalog/tickets/` (catalog_api) не защищена ни проверкой сессии (login_required/middleware), ни проверкой токена: в urls.py нет обёртки, у представления нет декоратора аутентификации, в теле нет проверки заголовка Authorization. Представление возвращает данные с персональными сведениями (email) любому анонимному клиенту.",
+      "severity": "critical",
+      "severity_ru": "критический",
+      "confidence": "confirmed",
+      "recommendation": "Добавить серверную проверку сессии или токена (единый механизм, как у остальных защищённых маршрутов) и ограничить выборку областью данных пользователя.",
+      "source": "rule:ib02.route_without_auth",
+      "spec_refs": [
+        "ТЗ 4.5.2",
+        "ТС 4.4.1",
+        "ТС 4.4.3",
+        "ТС 4.3.9"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-02-fdff5975",
+      "requirement_id": "IB-02",
+      "requirement_display_id": "ИБ-02",
+      "requirement_title": "Проверка сессии и токена на стороне сервера",
+      "requirement_text": "Валидность сессии и (или) токена должна проверяться на стороне сервера при каждом обращении к защищённым конечным точкам, включая программные интерфейсы (API).",
+      "location": {
+        "file": "portal/views.py",
+        "line": 178,
+        "function": "token_user"
+      },
+      "related_locations": [],
+      "evidence": "    data = signing.loads(header[7:],salt='support-api')",
+      "justification": "Функция `token_user` проверяет только подпись токена (signing.loads без max_age) и не сравнивает поле exp с текущим временем: истёкший токен принимается как действительный, т.е. валидность токена на сервере проверяется не полностью (ТС 4.4.3: отклонять истёкшие сессии/токены).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Передавать max_age в signing.loads либо явно проверять data['exp'] > time.time(); при выходе из системы, смене пароля или роли — отзывать выданные токены.",
+      "source": "rule:ib02.token_expiry_not_enforced",
+      "spec_refs": [
+        "ТЗ 4.5.2",
+        "ТС 4.4.3",
+        "ТС 4.4.7"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-03-46777308",
+      "requirement_id": "IB-03",
+      "requirement_display_id": "ИБ-03",
+      "requirement_title": "Защита канала передачи данных",
+      "requirement_text": "Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.",
+      "location": {
+        "file": "proxy.json",
+        "line": 7,
+        "function": "http_redirect"
+      },
+      "related_locations": [],
+      "evidence": "  \"http_redirect\": false",
+      "justification": "proxy.json: \"http_redirect\": false — транспортный модуль принимает запросы на HTTP-порту 8086 и проксирует их в приложение как есть, вместо перенаправления на HTTPS. Данные (включая учётные данные и cookie сессии) могут передаваться открытым текстом.",
+      "severity": "critical",
+      "severity_ru": "критический",
+      "confidence": "confirmed",
+      "recommendation": "Установить \"http_redirect\": true (ответ 308 на HTTPS-порт) либо не открывать HTTP-слушатель вовсе.",
+      "source": "rule:ib03.http_listener_without_redirect",
+      "spec_refs": [
+        "ТЗ 4.5.3",
+        "ТС 4.8.2"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-03-e83d9a7e",
+      "requirement_id": "IB-03",
+      "requirement_display_id": "ИБ-03",
+      "requirement_title": "Защита канала передачи данных",
+      "requirement_text": "Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 24,
+        "function": "SESSION_COOKIE_SECURE"
+      },
+      "related_locations": [],
+      "evidence": "SESSION_COOKIE_SECURE = False",
+      "justification": "SESSION_COOKIE_SECURE = False: сессионная cookie может передаваться по незащищённому HTTP (нет флага Secure). Конфигурация допускает передачу данных в незащищённом виде (ТС 4.8.2).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Установить SESSION_COOKIE_SECURE = True.",
+      "source": "rule:ib03.session_cookie_secure",
+      "spec_refs": [
+        "ТЗ 4.5.3",
+        "ТС 4.8.2"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-03-63022943",
+      "requirement_id": "IB-03",
+      "requirement_display_id": "ИБ-03",
+      "requirement_title": "Защита канала передачи данных",
+      "requirement_text": "Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 25,
+        "function": "CSRF_COOKIE_SECURE"
+      },
+      "related_locations": [],
+      "evidence": "CSRF_COOKIE_SECURE = False",
+      "justification": "CSRF_COOKIE_SECURE = False: CSRF-cookie может передаваться по незащищённому HTTP (нет флага Secure). Конфигурация допускает передачу данных в незащищённом виде (ТС 4.8.2).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Установить CSRF_COOKIE_SECURE = True.",
+      "source": "rule:ib03.csrf_cookie_secure",
+      "spec_refs": [
+        "ТЗ 4.5.3",
+        "ТС 4.8.2"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-03-7cc8ce45",
+      "requirement_id": "IB-03",
+      "requirement_display_id": "ИБ-03",
+      "requirement_title": "Защита канала передачи данных",
+      "requirement_text": "Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 26,
+        "function": "SECURE_SSL_REDIRECT"
+      },
+      "related_locations": [],
+      "evidence": "SECURE_SSL_REDIRECT = False",
+      "justification": "SECURE_SSL_REDIRECT = False: приложение не принуждает к защищённому соединению: запросы по HTTP обслуживаются без перенаправления на HTTPS. Конфигурация допускает передачу данных в незащищённом виде (ТС 4.8.2).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Установить SECURE_SSL_REDIRECT = True (и перенаправление на уровне транспортного модуля).",
+      "source": "rule:ib03.secure_ssl_redirect",
+      "spec_refs": [
+        "ТЗ 4.5.3",
+        "ТС 4.8.2"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-03-684bf913",
+      "requirement_id": "IB-03",
+      "requirement_display_id": "ИБ-03",
+      "requirement_title": "Защита канала передачи данных",
+      "requirement_text": "Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.",
+      "location": {
+        "file": "proxy.json",
+        "line": 6,
+        "function": "ciphers"
+      },
+      "related_locations": [],
+      "evidence": "  \"ciphers\": \"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES128-SHA\",",
+      "justification": "proxy.json: в списке шифронаборов присутствуют слабые: AES128-SHA (обмен ключами RSA без эфемерности (ECDHE); режим CBC/без AEAD; HMAC-SHA1). ТС 4.8.1 допускает для TLS 1.2 только наборы с ECDHE и AEAD; наборы с обменом ключами RSA, режимом CBC и HMAC-SHA1 запрещены.",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Оставить только ECDHE+AEAD, например: ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-CHACHA20-POLY1305.",
+      "source": "rule:ib03.weak_cipher_suites",
+      "spec_refs": [
+        "ТЗ 4.5.3",
+        "ТС 4.8.1"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-03-4d5e28be",
+      "requirement_id": "IB-03",
+      "requirement_display_id": "ИБ-03",
+      "requirement_title": "Защита канала передачи данных",
+      "requirement_text": "Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 28,
+        "function": "SECURE_HSTS_SECONDS"
+      },
+      "related_locations": [],
+      "evidence": "SECURE_HSTS_SECONDS = 0",
+      "justification": "SECURE_HSTS_SECONDS = 0: политика принудительного использования защищённого соединения (HSTS) не объявляется, браузер может обратиться по HTTP (ТС 4.8.2).",
+      "severity": "medium",
+      "severity_ru": "средний",
+      "confidence": "confirmed",
+      "recommendation": "Установить SECURE_HSTS_SECONDS (например, 31536000) и SECURE_HSTS_INCLUDE_SUBDOMAINS = True.",
+      "source": "rule:ib03.hsts_disabled",
+      "spec_refs": [
+        "ТЗ 4.5.3",
+        "ТС 4.8.2"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-04-767bedeb",
+      "requirement_id": "IB-04",
+      "requirement_display_id": "ИБ-04",
+      "requirement_title": "Криптографическая защита персональных данных при хранении",
+      "requirement_text": "Персональные данные (фамилия, имя, отчество, логин, адрес электронной почты, пароль) должны храниться с применением криптографической защиты с параметрами не ниже уровня, установленного СТ РК 1073-2007. Пароли должны храниться в виде значений функций формирования ключа bcrypt, argon2 или scrypt. Хранение паролей в открытом виде, а равно с применением быстрых хеш-функций общего назначения без адаптивного алгоритма, является нарушением.",
+      "location": {
+        "file": "portal/models.py",
+        "line": 5,
+        "function": "User"
+      },
+      "related_locations": [
+        {
+          "file": "portal/models.py",
+          "line": 6,
+          "function": "username"
+        },
+        {
+          "file": "portal/models.py",
+          "line": 7,
+          "function": "first_name"
+        },
+        {
+          "file": "portal/models.py",
+          "line": 8,
+          "function": "last_name"
+        },
+        {
+          "file": "portal/models.py",
+          "line": 9,
+          "function": "middle_name"
+        },
+        {
+          "file": "portal/models.py",
+          "line": 10,
+          "function": "email"
+        }
+      ],
+      "evidence": "class User(AbstractUser):\n    username = CharField(max_length=150, unique=True)\n    first_name = CharField(max_length=150, blank=True)\n    last_name = CharField(max_length=150, blank=True)\n    middle_name = CharField(max_length=150, blank=True)\n    email = EmailField(blank=True)\n    role = models.CharField(max_length=20, choices=[('applicant','Заявитель'),('operator','Оператор'),('administrator','Администратор')], default='applicant')",
+      "justification": "Персональные данные в модели пользователя `User` хранятся в БД открытым текстом: username (CharField, стр. 6), first_name (CharField, стр. 7), last_name (CharField, стр. 8), middle_name (CharField, стр. 9), email (EmailField, стр. 10). Шифрование на уровне полей (аутентифицированное шифрование, ключ ≥ 256 бит — ТС 4.5.3) или шифрованная СУБД не обнаружены; криптографически защищены только пароль (хеш) и содержимое вложений (AEAD в модуле хранения).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "likely",
+      "recommendation": "Хранить ФИО, логин и e-mail через поля с аутентифицированным шифрованием (AES-256-GCM с ключом из runtime/keys, отдельным от данных); для поиска по логину/e-mail использовать слепой индекс (HMAC).",
+      "source": "rule:ib04.pii_fields_stored_plaintext",
+      "spec_refs": [
+        "ТЗ 4.5.4",
+        "ТС 4.5.1",
+        "ТС 4.5.3"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-05-8d724e74",
+      "requirement_id": "IB-05",
+      "requirement_display_id": "ИБ-05",
+      "requirement_title": "Защита локальных журналов приложения",
+      "requirement_text": "Локальные журналы приложения должны храниться в зашифрованном виде и быть защищены от модификации пользователем до момента их отправки на сервер.",
+      "location": {
+        "file": "portal/local_acl.py",
+        "line": 31,
+        "function": "configure"
+      },
+      "related_locations": [],
+      "evidence": "    set_reader_access(runtime/'journal','read')",
+      "justification": "Каталог журнала (runtime/'journal'), в котором хранится ключ шифрования журнала (LOG_KEY_FILE = RUNTIME / 'journal' / 'journal.key'), доступен на чтение непривилегированным локальным субъектам: зная ключ, пользователь может расшифровать, подделать и заново зашифровать записи — шифрование не защищает журнал от модификации.",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Хранить journal.key в каталоге keys (доступ none) отдельно от записей журнала либо закрыть чтение каталога journal.",
+      "source": "rule:ib05.journal_key_readable_by_local_user",
+      "spec_refs": [
+        "ТЗ 4.5.5",
+        "ТС 4.5.4",
+        "ТС 4.6.7"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-05-a5e56c04",
+      "requirement_id": "IB-05",
+      "requirement_display_id": "ИБ-05",
+      "requirement_title": "Защита локальных журналов приложения",
+      "requirement_text": "Локальные журналы приложения должны храниться в зашифрованном виде и быть защищены от модификации пользователем до момента их отправки на сервер.",
+      "location": {
+        "file": "portal/local_acl.py",
+        "line": 32,
+        "function": "configure"
+      },
+      "related_locations": [],
+      "evidence": "    set_reader_access(runtime/'journal'/'pending','modify')",
+      "justification": "Каталог неотправленных записей журнала (runtime/'journal'/'pending') получает право modify для непривилегированных локальных субъектов: записи могут быть удалены или подменены до передачи сборщику событий (ТС 4.6.7 требует защиты от подмены и удаления).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Выдавать на каталог pending только права владельца процесса и SYSTEM; непривилегированным субъектам — none.",
+      "source": "rule:ib05.pending_journal_writable_by_local_user",
+      "spec_refs": [
+        "ТЗ 4.5.5",
+        "ТС 4.6.7"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-07-0964d932",
+      "requirement_id": "IB-07",
+      "requirement_display_id": "ИБ-07",
+      "requirement_title": "Журналирование действий пользователей и событий СУБД (сквозное требование)",
+      "requirement_text": "В проекте должен быть реализован единый журнал действий пользователей, имеющих доступ к данным, а также журнал событий системы управления базами данных. Журналирование должно охватывать проект в целом, а не отдельную функцию или отдельный программный модуль. Реализация журналирования в части функций, обеспечивающих доступ к данным, при отсутствии его в остальных, является нарушением.",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 15,
+        "function": "DATABASES"
+      },
+      "related_locations": [],
+      "evidence": "DATABASES = {'default': {'ENGINE':'django.db.backends.sqlite3', 'NAME': RUNTIME / 'helpdesk.sqlite3', 'OPTIONS': {'timeout': 30}}}",
+      "justification": "Журнал событий СУБД не реализован: нет обработчиков сигнала connection_created, трассировки SQLite (set_trace_callback), регистрации миграций (pre/post_migrate) или изменения прав на файл БД; логгер django.db не имеет обработчика. ТЗ ИБ-07 и ТС 4.6.5 требуют вести журнал событий СУБД (соединения, отказы, изменение структуры, права на файл БД).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "likely",
+      "recommendation": "Подключить connection_created для регистрации соединений, регистрировать миграции и команду db_access через общий аудит, включить трассировку DDL.",
+      "source": "rule:ib07.no_dbms_event_log",
+      "spec_refs": [
+        "ТЗ 4.5.7",
+        "ТС 4.6.5"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-07-320074b5",
+      "requirement_id": "IB-07",
+      "requirement_display_id": "ИБ-07",
+      "requirement_title": "Журналирование действий пользователей и событий СУБД (сквозное требование)",
+      "requirement_text": "В проекте должен быть реализован единый журнал действий пользователей, имеющих доступ к данным, а также журнал событий системы управления базами данных. Журналирование должно охватывать проект в целом, а не отдельную функцию или отдельный программный модуль. Реализация журналирования в части функций, обеспечивающих доступ к данным, при отсутствии его в остальных, является нарушением.",
+      "location": {
+        "file": "portal/audit.py",
+        "line": 8,
+        "function": "record"
+      },
+      "related_locations": [
+        {
+          "file": "portal/views.py",
+          "line": 22,
+          "function": "ticket_list",
+          "pattern": ""
+        },
+        {
+          "file": "portal/views.py",
+          "line": 41,
+          "function": "ticket_detail",
+          "pattern": "tickets/<int:ticket_id>/"
+        },
+        {
+          "file": "portal/views.py",
+          "line": 85,
+          "function": "attachment",
+          "pattern": "attachments/<int:attachment_id>/"
+        },
+        {
+          "file": "portal/views.py",
+          "line": 185,
+          "function": "ticket_api",
+          "pattern": "api/v1/tickets/"
+        },
+        {
+          "file": "portal/views.py",
+          "line": 202,
+          "function": "catalog_api",
+          "pattern": "api/catalog/tickets/"
+        }
+      ],
+      "evidence": "def record(action, obj, **details):\n    event = {'id':uuid.uuid4().hex, 'time':datetime.now(timezone.utc).isoformat(), 'actor':str(actor.get()), 'action':action, 'object':str(obj), 'details':details}\n    nonce = os.urandom(12)\n    payload = nonce + AESGCM(settings.LOG_KEY_FILE.read_bytes()).encrypt(nonce, json.dumps(event, sort_keys=True).encode(), b'journal')\n    folder = settings.RUNTIME / 'journal' / 'pending'\n    folder.mkdir(parents=True, exist_ok=True)\n    staging = folder / (event['id'] + '.tmp')\n    staging.write_bytes(payload)\n    staging.rename(folder / (event['id'] + '.evt'))\n    return event",
+      "justification": "Журналирование реализовано только через сигналы изменения данных и события входа: операции чтения — просмотр списков и карточек обращений, скачивание вложений, чтение через API — не регистрируются ни middleware, ни в представлениях. Незарегистрированные маршруты чтения (5):  → ticket_list (portal/views.py:22), tickets/<int:ticket_id>/ → ticket_detail (portal/views.py:41), attachments/<int:attachment_id>/ → attachment (portal/views.py:85), api/v1/tickets/ → ticket_api (portal/views.py:185), api/catalog/tickets/ → catalog_api (portal/views.py:202). Журнал не охватывает проект в целом (ТС 4.6.1, 4.6.4: просмотр списков, карточек, скачивание вложений, чтение через API подлежат регистрации).",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "likely",
+      "recommendation": "Регистрировать операции чтения общим компонентом (middleware на каждый запрос к защищённым маршрутам с типом операции, объектом и результатом) вместо точечных вызовов в отдельных функциях.",
+      "source": "rule:ib07.read_access_not_logged",
+      "spec_refs": [
+        "ТЗ 4.5.7",
+        "ТС 4.6.1",
+        "ТС 4.6.2",
+        "ТС 4.6.4"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-07-b2670ee7",
+      "requirement_id": "IB-07",
+      "requirement_display_id": "ИБ-07",
+      "requirement_title": "Журналирование действий пользователей и событий СУБД (сквозное требование)",
+      "requirement_text": "В проекте должен быть реализован единый журнал действий пользователей, имеющих доступ к данным, а также журнал событий системы управления базами данных. Журналирование должно охватывать проект в целом, а не отдельную функцию или отдельный программный модуль. Реализация журналирования в части функций, обеспечивающих доступ к данным, при отсутствии его в остальных, является нарушением.",
+      "location": {
+        "file": "portal/views.py",
+        "line": 81,
+        "function": null
+      },
+      "related_locations": [],
+      "evidence": "    selected.update(status=status)",
+      "justification": "Пакетное изменение данных `selected.update(status=status)` выполняется через QuerySet.update(): сигналы post_save не срабатывают, механизм аудита это изменение не регистрирует. ТС 4.6.4 требует регистрировать пакетную смену статусов с указанием затронутых обращений.",
+      "severity": "high",
+      "severity_ru": "высокий",
+      "confidence": "confirmed",
+      "recommendation": "Регистрировать пакетную операцию явно (audit.record с перечнем идентификаторов) либо выполнять изменения через save() каждого объекта.",
+      "source": "rule:ib07.bulk_update_bypasses_audit",
+      "spec_refs": [
+        "ТЗ 4.5.7",
+        "ТС 4.6.4",
+        "ТС 4.6.6"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-07-8d0e7036",
+      "requirement_id": "IB-07",
+      "requirement_display_id": "ИБ-07",
+      "requirement_title": "Журналирование действий пользователей и событий СУБД (сквозное требование)",
+      "requirement_text": "В проекте должен быть реализован единый журнал действий пользователей, имеющих доступ к данным, а также журнал событий системы управления базами данных. Журналирование должно охватывать проект в целом, а не отдельную функцию или отдельный программный модуль. Реализация журналирования в части функций, обеспечивающих доступ к данным, при отсутствии его в остальных, является нарушением.",
+      "location": {
+        "file": "portal/middleware.py",
+        "line": 2,
+        "function": null
+      },
+      "related_locations": [],
+      "evidence": "class ActorMiddleware:\n    def __init__(self, get_response): self.get_response = get_response\n    def __call__(self, request):\n        token = *** if request.user.is_authenticated else 'anonymous')\n        try: return self.get_response(request)\n        finally: actor.reset(token)",
+      "justification": "Отказы в доступе к защищённым операциям (PermissionDenied/403) нигде не регистрируются в журнале аудита: нет обработчика исключений или middleware, записывающего событие отказа (ТС 4.6.4).",
+      "severity": "medium",
+      "severity_ru": "средний",
+      "confidence": "likely",
+      "recommendation": "В middleware (process_exception) или обработчике 403 записывать событие отказа с идентификатором пользователя, объектом и маршрутом.",
+      "source": "rule:ib07.access_denials_not_logged",
+      "spec_refs": [
+        "ТЗ 4.5.7",
+        "ТС 4.6.4"
+      ],
+      "model_comment": null
+    },
+    {
+      "id": "ИБ-08-1ed2a838",
+      "requirement_id": "IB-08",
+      "requirement_display_id": "ИБ-08",
+      "requirement_title": "Контроль выгрузки персональных данных",
+      "requirement_text": "Выгрузка данных, содержащих персональные сведения, должна быть доступна исключительно пользователям с ролью «администратор». Каждый факт выгрузки должен фиксироваться записью в журнале аудита. Отсутствие проверки роли либо отсутствие записи в журнале аудита при выполнении выгрузки является нарушением.",
+      "location": {
+        "file": "portal/views.py",
+        "line": 163,
+        "function": "export_json"
+      },
+      "related_locations": [],
+      "evidence": "@login_required\n@require_GET\ndef export_json(request):\n    rows = people_rows()\n    response = JsonResponse({'people':rows,'generated_at':int(time.time())})\n    response['Content-Disposition'] = 'attachment; filename=\"people.json\"'\n    response['Cache-Control'] = 'no-store'\n    return response",
+      "justification": "Маршрут `exports/people.json` (export_json) выгружает персональные данные пользователей (через people_rows()): роль «администратор» на сервере не проверяется — выгрузка доступна любому аутентифицированному пользователю (только login_required); факт выгрузки не фиксируется в журнале аудита (нет вызова audit.record / аналогичного). Декораторы: login_required, require_GET.",
+      "severity": "critical",
+      "severity_ru": "критический",
+      "confidence": "confirmed",
+      "recommendation": "Защитить выгрузку тем же серверным декоратором роли администратора, что и остальные форматы выгрузки, и записывать событие выгрузки в аудит с датой, инициатором, форматом и числом записей.",
+      "source": "rule:ib08.pii_export_without_role_check_or_audit",
+      "spec_refs": [
+        "ТЗ 4.5.8",
+        "ТС 4.7.2",
+        "ТС 4.7.3"
+      ],
+      "model_comment": null
+    }
+  ],
+  "additional_findings": [
+    {
+      "category": "session-auth-detail",
+      "severity": "medium",
+      "description": "Не найден механизм ограничения неуспешных попыток входа и временной блокировки (ТС 4.4.6: не более 5 попыток для учётной записи и ограничение по источнику в течение 15 минут, с сохранением при перезапуске). Проверены все 10 элементов INSTALLED_APPS и 9 элементов MIDDLEWARE на axes/ratelimit/defender/lockout/throttl/brute — совпадений нет. Рекомендация: подключить django-axes или аналогичный серверный механизм с хранением счётчиков в БД.",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 10
+      },
+      "source": "rule"
+    },
+    {
+      "category": "session-auth-detail",
+      "severity": "medium",
+      "description": "AUTH_PASSWORD_VALIDATORS не обеспечивает парольную политику ТС 4.4.8 (и 4.4.8: смена и сброс пароля должны препятствовать использованию старых данных): отсутствует отклонение распространённых паролей (CommonPasswordValidator); отклонение полностью числовых паролей (NumericPasswordValidator); запрет повторного использования прежнего пароля. Сейчас настроено: django.contrib.auth.password_validation.MinimumLengthValidator.",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 17
+      },
+      "source": "rule"
+    },
+    {
+      "category": "session-auth-detail",
+      "severity": "medium",
+      "description": "`change_role` изменяет роль или пароль пользователя, но не отзывает ранее выданные токены доступа и сессии (ТС 4.4.7, 4.3.5): токен API, выданный до изменения, продолжает действовать до истечения срока.",
+      "location": {
+        "file": "portal/views.py",
+        "line": 115
+      },
+      "source": "rule"
+    },
+    {
+      "category": "session-auth-detail",
+      "severity": "medium",
+      "description": "`reset_password` изменяет роль или пароль пользователя, но не отзывает ранее выданные токены доступа и сессии (ТС 4.4.7, 4.3.5): токен API, выданный до изменения, продолжает действовать до истечения срока.",
+      "location": {
+        "file": "portal/views.py",
+        "line": 135
+      },
+      "source": "rule"
+    },
+    {
+      "category": "data-handling-detail",
+      "severity": "low",
+      "description": "Модель `TicketCC` хранит копии персональных данных открытым текстом: email (ТС 4.5.1 относит копии ПД в обращениях к защищаемым данным).",
+      "location": {
+        "file": "src/helpdesk/models.py",
+        "line": 1885,
+        "function": "TicketCC"
+      },
+      "spec_refs": [
+        "ТС 4.5.1",
+        "ТС 4.5.3"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "audit-detail",
+      "severity": "medium",
+      "description": "Сборщик событий не изолирует повреждённые записи: исключение при расшифровке одной записи прерывает обработку остальных (ТС 4.6.7 требует изоляции повреждённых записей без остановки обработки).",
+      "location": {
+        "file": "collector.py",
+        "line": 11,
+        "function": "collect_once"
+      },
+      "spec_refs": [
+        "ТС 4.6.7"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "audit-detail",
+      "severity": "low",
+      "description": "Изменение данных в обход сигналов аудита: `Ticket.objects.filter(pk=ticket.pk).update(created=created, modified=followups[-1].date)` (QuerySet.update()) — событие не регистрируется.",
+      "location": {
+        "file": "portal/management/commands/seed_workload.py",
+        "line": 223
+      },
+      "spec_refs": [
+        "ТС 4.6.6"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "access-control-detail",
+      "severity": "low",
+      "description": "`queues` определяет доступные оператору очереди через get_all_permissions(), которое включает права групп: членство в группе расширяет область доступа оператора, что запрещено ТС 4.3.2 (права на очереди выдаются явно).",
+      "location": {
+        "file": "portal/access.py",
+        "line": 29,
+        "function": "queues"
+      },
+      "spec_refs": [
+        "ТС 4.3.2"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "data-handling-detail",
+      "severity": "medium",
+      "description": "`clean_attachment` проверяет вложение только по расширению и размеру; соответствие содержимого заявленному формату и отсутствие активного содержимого не проверяются (ТС 4.11.2 требует проверку содержимого в изолированном процессе).",
+      "location": {
+        "file": "portal/forms.py",
+        "line": 16,
+        "function": "clean_attachment"
+      },
+      "spec_refs": [
+        "ТС 4.11.2"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "access-control-detail",
+      "severity": "medium",
+      "description": "`change_role` изменяет роль пользователя, но не снимает ранее выданные права на очереди (user_permissions не очищаются) — бывший оператор, переведённый в заявители, сохраняет права (ТС 4.3.5).",
+      "location": {
+        "file": "portal/views.py",
+        "line": 115,
+        "function": "change_role"
+      },
+      "spec_refs": [
+        "ТС 4.3.5"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "access-control-detail",
+      "severity": "medium",
+      "description": "`grant_queue` выдаёт право на очередь (user_permissions.add) без проверки, что получатель имеет роль «оператор» (ТС 4.3.5: право на очередь выдаётся только учётным записям с ролью «оператор»).",
+      "location": {
+        "file": "portal/views.py",
+        "line": 127,
+        "function": "grant_queue"
+      },
+      "spec_refs": [
+        "ТС 4.3.5"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "export-detail",
+      "severity": "low",
+      "description": "`export_csv`: экранирование формул в CSV не учитывает префиксы табуляции и возврата каретки (\\t, \\r), которые табличные редакторы также интерпретируют (ТС 4.7.4).",
+      "location": {
+        "file": "portal/views.py",
+        "line": 154,
+        "function": "export_csv"
+      },
+      "spec_refs": [
+        "ТС 4.7.4"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "audit-detail",
+      "severity": "medium",
+      "description": "Запись журнала аудита (`record`) не содержит обязательных по ТС 4.6.3 полей: результат операции, идентификатор запроса, идентификатор источника запроса.",
+      "location": {
+        "file": "portal/audit.py",
+        "line": 8,
+        "function": "record"
+      },
+      "spec_refs": [
+        "ТС 4.6.3"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "audit-detail",
+      "severity": "medium",
+      "description": "События изменения данных пишутся в журнал непосредственно из сигналов post_save/post_delete, без transaction.on_commit: при откате транзакции в журнале остаётся событие успешной операции (ТС 4.6.6).",
+      "location": {
+        "file": "portal/audit.py",
+        "line": 23,
+        "function": "mutation"
+      },
+      "spec_refs": [
+        "ТС 4.6.6"
+      ],
+      "source": "rule"
+    },
+    {
+      "category": "transport-detail",
+      "severity": "low",
+      "description": "Приложение `helpdesk` включено в INSTALLED_APPS, но его маршруты не подключены к ROOT_URLCONF; при этом WhiteNoise раздаёт статику всех приложений (collectstatic), включая `src/helpdesk/static` — статические ресурсы неподключённых библиотечных компонентов не должны обслуживаться (ТС 4.9.3).",
+      "location": {
+        "file": "demodesk/config/settings.py",
+        "line": 10,
+        "function": "INSTALLED_APPS"
+      },
+      "spec_refs": [
+        "ТС 4.9.3",
+        "ТС 4.1.5"
+      ],
+      "source": "rule"
+    }
+  ],
+  "limitations": [
+    "Режим только правил: модель не использовалась; семантические дефекты, недоступные статическим правилам, могли остаться не выявленными."
+  ],
+  "resources": {
+    "llm": {},
+    "llm_calls": 0
+  }
+}

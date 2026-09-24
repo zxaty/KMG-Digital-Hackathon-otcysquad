@@ -34,6 +34,8 @@ import ast
 import json
 import re
 import sys
+import zipfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -341,7 +343,7 @@ class Indexer:
             "target": target,
             "is_class_based": is_cbv,
             "url_level_wrappers": wrappers,
-            "source_file": str(path.relative_to(self.root)),
+            "source_file": path.relative_to(self.root).as_posix(),
             "line": element.lineno,
             **view_info,
         }]
@@ -407,7 +409,7 @@ class Indexer:
                 return {
                     "view_module": module_dotted,
                     "view_function": func_name,
-                    "view_file": str(path.relative_to(self.root)) if path.exists() else str(path),
+                    "view_file": path.relative_to(self.root).as_posix() if path.exists() else path.as_posix(),
                     "view_line": node.lineno,
                     "decorators": decorators,
                     "body_guard_calls": guards,
@@ -500,8 +502,8 @@ class Indexer:
                         pii = any(hint in fname.lower() for hint in PII_NAME_HINTS)
                         fields.append({"name": fname, "type": ftype, "line": stmt.lineno, "pii_name_hint": pii})
                 models_out.append({
-                    "app_dir": str(app_dir.relative_to(self.root)),
-                    "file": str(models_file.relative_to(self.root)),
+                    "app_dir": app_dir.relative_to(self.root).as_posix(),
+                    "file": models_file.relative_to(self.root).as_posix(),
                     "class_name": node.name,
                     "bases": base_names,
                     "line": node.lineno,
@@ -514,10 +516,10 @@ class Indexer:
     def iter_project_py_files(self):
         seen: set[Path] = set()
         for base in self.search_roots:
-            for path in base.rglob("*.py"):
+            for path in sorted(base.rglob("*.py")):
                 if path in seen:
                     continue
-                if any(part in EXCLUDE_DIR_PARTS for part in path.parts):
+                if any(part in EXCLUDE_DIR_PARTS for part in path.relative_to(base).parts):
                     continue
                 seen.add(path)
                 yield path
@@ -582,7 +584,7 @@ class Indexer:
                                     looks_like_queryset = True
                                     traced_from = next(c for c in candidates if self._looks_like_queryset_source(c))
                     hits.append({
-                        "file": str(path.relative_to(self.root)),
+                        "file": path.relative_to(self.root).as_posix(),
                         "line": node.lineno,
                         "method": node.func.attr,
                         "receiver_source": receiver_src,
@@ -612,9 +614,9 @@ class Indexer:
                                 val, ok = literal_or_source(cmp_node)
                                 if ok:
                                     allowed = val
-                        return {"resolved": True, "file": str(path.relative_to(self.root)), "line": sub.lineno,
+                        return {"resolved": True, "file": path.relative_to(self.root).as_posix(), "line": sub.lineno,
                                 "source": self._safe_unparse(sub), "allowed_app_labels": allowed}
-                return {"resolved": True, "file": str(path.relative_to(self.root)), "line": node.lineno,
+                return {"resolved": True, "file": path.relative_to(self.root).as_posix(), "line": node.lineno,
                         "allowed_app_labels": None,
                         "note": "no app_label filter found in handler body; handler applies unconditionally to every sender"}
         return {"resolved": False, "reason": f"function {func_name} not found in {module_dotted}"}
@@ -649,7 +651,7 @@ class Indexer:
                             v, _ = literal_or_source(kw.value)
                             dispatch_uid = v
                     connections.append({
-                        "file": str(apps_py.relative_to(self.root)),
+                        "file": apps_py.relative_to(self.root).as_posix(),
                         "line": node.lineno,
                         "signal": signal_name,
                         "handler": handler,
@@ -693,10 +695,35 @@ class Indexer:
 
     # ---------- check 3: local_acl.py / audit.py structured extraction ----------
 
+    def _find_module_by_content(self, name_hint: str, content_re: str) -> Path | None:
+        """Первый .py проекта, чьё имя содержит name_hint ИЛИ содержимое матчит content_re."""
+        rx = re.compile(content_re)
+        by_name = None
+        for path in self.iter_project_py_files():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if name_hint in path.name.lower() and by_name is None and rx.search(text):
+                by_name = path
+        if by_name:
+            return by_name
+        for path in self.iter_project_py_files():
+            try:
+                if rx.search(path.read_text(encoding="utf-8")):
+                    return path
+            except Exception:
+                continue
+        return None
+
     def index_log_protection(self) -> dict:
-        out = {"local_acl_configure_calls": [], "audit_functions": []}
-        acl_path = self.root / "portal" / "local_acl.py"
-        if acl_path.is_file():
+        """Структурная выжимка модуля прав доступа (set_reader_access/chmod) и
+        модуля аудита (шифрованная запись журнала). Модули ищутся по всему
+        проекту (имя + содержимое), а не по жёстко заданному пути."""
+        out = {"local_acl_configure_calls": [], "audit_functions": [], "acl_module": None, "audit_module": None}
+        acl_path = self._find_module_by_content("acl", r"def set_reader_access\(|SetNamedSecurityInfo|os\.chmod\(")
+        if acl_path is not None:
+            out["acl_module"] = acl_path.relative_to(self.root).as_posix()
             tree = ast.parse(acl_path.read_text(encoding="utf-8"), filename=str(acl_path))
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef) and node.name == "configure":
@@ -706,18 +733,21 @@ class Indexer:
                             access_val, resolved = literal_or_source(sub.args[1])
                             out["local_acl_configure_calls"].append({"path_expr": path_expr, "access": access_val, "resolved": resolved, "line": sub.lineno})
         else:
-            self.note("log-protection", "portal/local_acl.py not found")
+            self.note("log-protection", "модуль управления правами доступа (set_reader_access/chmod) не найден")
 
-        audit_path = self.root / "portal" / "audit.py"
-        if audit_path.is_file():
+        audit_path = self._find_module_by_content("audit", r"AESGCM|Fernet|ChaCha20Poly1305")
+        if audit_path is None:
+            audit_path = self._find_module_by_content("audit", r"def record\(")
+        if audit_path is not None:
+            out["audit_module"] = audit_path.relative_to(self.root).as_posix()
             tree = ast.parse(audit_path.read_text(encoding="utf-8"), filename=str(audit_path))
-            import_map = self.build_import_map(tree, "portal.audit")
+            import_map = self.build_import_map(tree, self.path_to_dotted(audit_path))
             for node in tree.body:
                 if isinstance(node, ast.FunctionDef):
                     calls = [self.resolve_name_chain(c.func, import_map) for c in ast.walk(node) if isinstance(c, ast.Call)]
-                    uses_aead = any(c.split(".")[-1] in ("AESGCM", "Fernet") for c in calls)
+                    uses_aead = any(c.split(".")[-1] in ("AESGCM", "Fernet", "ChaCha20Poly1305", "AESCCM") for c in calls)
                     has_write = any(c.split(".")[-1] in ("write_bytes", "write_text") for c in calls)
-                    has_rename = any(c.split(".")[-1] == "rename" for c in calls)
+                    has_rename = any(c.split(".")[-1] in ("rename", "replace") for c in calls)
                     out["audit_functions"].append({
                         "function": node.name,
                         "line": node.lineno,
@@ -727,7 +757,7 @@ class Indexer:
                         "atomic_write_pattern": has_write and has_rename,
                     })
         else:
-            self.note("log-protection", "portal/audit.py not found")
+            self.note("log-protection", "модуль аудита (шифрованная запись журнала) не найден")
         return out
 
     # ---------- check 4: token lifecycle / revocation on role or password change ----------
@@ -751,16 +781,16 @@ class Indexer:
                         isinstance(sub, ast.Dict) and any(isinstance(k, ast.Constant) and k.value == "exp" for k in sub.keys)
                         for sub in ast.walk(node)
                     )
-                    result["issuers"].append({"function": node.name, "file": str(path.relative_to(self.root)), "line": node.lineno, "embeds_exp_claim": embeds_exp})
+                    result["issuers"].append({"function": node.name, "file": path.relative_to(self.root).as_posix(), "line": node.lineno, "embeds_exp_claim": embeds_exp})
                 if any(c.endswith("signing.loads") for c in calls):
                     checks_exp = any(
                         isinstance(sub, (ast.Subscript, ast.Call)) and ("'exp'" in self._safe_unparse(sub) or '"exp"' in self._safe_unparse(sub))
                         for sub in ast.walk(node)
                     )
-                    result["validators"].append({"function": node.name, "file": str(path.relative_to(self.root)), "line": node.lineno, "checks_exp_claim": checks_exp})
+                    result["validators"].append({"function": node.name, "file": path.relative_to(self.root).as_posix(), "line": node.lineno, "checks_exp_claim": checks_exp})
                 if any(hint in node.name.lower() for hint in change_name_hints):
                     hits = sorted({c for c in calls if any(h in c.lower() for h in revocation_hints)})
-                    result["role_or_password_change_functions"].append({"function": node.name, "file": str(path.relative_to(self.root)), "line": node.lineno, "revocation_related_calls": hits})
+                    result["role_or_password_change_functions"].append({"function": node.name, "file": path.relative_to(self.root).as_posix(), "line": node.lineno, "revocation_related_calls": hits})
         return result
 
     # ---------- check 5: failed-login throttling ----------
@@ -798,7 +828,7 @@ class Indexer:
                 continue
             for lineno, line in enumerate(lines, start=1):
                 if self.PASSWORD_REUSE_RE.search(line):
-                    reuse_hits.append({"file": str(path.relative_to(self.root)), "line": lineno, "text": line.strip()})
+                    reuse_hits.append({"file": path.relative_to(self.root).as_posix(), "line": lineno, "text": line.strip()})
         return {
             "configured_validators": names,
             "resolved_statically": entry.get("resolved", False),
@@ -853,14 +883,14 @@ class Indexer:
                 if isinstance(node, ast.Assign):
                     for target in node.targets:
                         if isinstance(target, ast.Attribute) and target.attr == "password":
-                            hits.append({"file": str(path.relative_to(self.root)), "line": node.lineno,
+                            hits.append({"file": path.relative_to(self.root).as_posix(), "line": node.lineno,
                                          "kind": "direct_attribute_assign", "source": self._safe_unparse(node)})
                 if isinstance(node, ast.Call):
                     func_src = self._safe_unparse(node.func)
                     if func_src.endswith(".objects.create"):
                         for kw in node.keywords:
                             if kw.arg == "password":
-                                hits.append({"file": str(path.relative_to(self.root)), "line": node.lineno,
+                                hits.append({"file": path.relative_to(self.root).as_posix(), "line": node.lineno,
                                              "kind": "objects.create(password=...)", "source": self._safe_unparse(node)})
         return hits
 
@@ -887,22 +917,25 @@ class Indexer:
         the project would otherwise be indistinguishable from a real hit.
         """
         doc_files = []
+        docx_files = []
         readme = self.root / "README.md"
         if readme.is_file():
             doc_files.append(readme)
         docs_dir = self.root / "docs"
         if docs_dir.is_dir():
-            for p in docs_dir.iterdir():
+            for p in sorted(docs_dir.iterdir()):
                 if p.suffix.lower() in (".md", ".txt"):
                     doc_files.append(p)
-                elif p.suffix.lower() in (".docx", ".doc", ".pdf"):
-                    self.note("regulatory-references", f"{p.relative_to(self.root)} not parsed (binary format) - checked separately or flagged as a limitation")
+                elif p.suffix.lower() == ".docx":
+                    docx_files.append(p)
+                elif p.suffix.lower() in (".doc", ".pdf"):
+                    self.note("regulatory-references", f"{p.relative_to(self.root).as_posix()} not parsed (binary format) - checked separately or flagged as a limitation")
         searched = []
         lines_by_file: dict[str, list[str]] = {}
         for f in doc_files:
             try:
-                lines_by_file[str(f.relative_to(self.root))] = f.read_text(encoding="utf-8", errors="ignore").splitlines()
-                searched.append(str(f.relative_to(self.root)))
+                lines_by_file[f.relative_to(self.root).as_posix()] = f.read_text(encoding="utf-8", errors="ignore").splitlines()
+                searched.append(f.relative_to(self.root).as_posix())
             except Exception as exc:
                 self.note("regulatory-references", f"failed to read {f}: {exc}")
         if not searched:
@@ -914,12 +947,117 @@ class Indexer:
                     if any(m in line for m in markers):
                         evidence[key].append({"file": rel_path, "line": lineno, "text": line.strip()})
         reference_found = {key: bool(hits) for key, hits in evidence.items()}
+
+        # .docx documents (ТЗ / техническая спецификация) - parsed from the
+        # OOXML package with stdlib only (zipfile + ElementTree). Evidence is
+        # paragraph-level ("line" = 1-based paragraph index in word/document.xml),
+        # kept in a separate sub-dict so README line evidence stays byte-exact.
+        docx: dict[str, dict] = {}
+        for p in docx_files:
+            rel = p.relative_to(self.root).as_posix()
+            try:
+                paragraphs = self.docx_paragraphs(p)
+                hyperlinks = self.docx_hyperlinks(p)
+            except Exception as exc:
+                self.note("regulatory-references", f"{rel} not parsed (binary format): {exc}")
+                continue
+            d_evidence: dict[str, list[dict]] = {key: [] for key in self.REGULATORY_REFERENCES}
+            for pno, text in enumerate(paragraphs, start=1):
+                for key, markers in self.REGULATORY_REFERENCES.items():
+                    if any(m in text for m in markers):
+                        d_evidence[key].append({"file": rel, "paragraph": pno, "text": text.strip()[:300]})
+            d_found = {key: bool(hits) for key, hits in d_evidence.items()}
+            docx[rel] = {
+                "paragraphs_total": len(paragraphs),
+                "hyperlinks": hyperlinks,
+                "reference_found": d_found,
+                "reference_evidence": d_evidence,
+                "all_six_present": all(d_found.values()),
+            }
         return {
             "searched_files": searched,
             "reference_found": reference_found,
             "reference_evidence": evidence,
             "all_six_present": all(reference_found.values()),
+            "docx": docx,
         }
+
+    _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def docx_paragraphs(self, path: Path) -> list[str]:
+        """Plain text of every <w:p> in word/document.xml (tables included),
+        in document order. No external libraries."""
+        with zipfile.ZipFile(path) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+        out: list[str] = []
+        for p in root.iter(self._W_NS + "p"):
+            texts = [t.text or "" for t in p.iter(self._W_NS + "t")]
+            out.append("".join(texts))
+        return out
+
+    def docx_hyperlinks(self, path: Path) -> list[str]:
+        """External hyperlink targets declared in word/_rels/document.xml.rels."""
+        with zipfile.ZipFile(path) as z:
+            try:
+                rels = z.read("word/_rels/document.xml.rels").decode("utf-8", errors="ignore")
+            except KeyError:
+                return []
+        return sorted(set(re.findall(r'Target="(https?://[^"]+)"', rels)))
+
+    # ---------- whole-project inventory (completeness evidence, ТЗ 4.4.1/4.4.3) ----------
+
+    INVENTORY_SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", "runtime", "agent", ".claude"}
+    # The agent's own files that live outside agent/ (its CI step) are not part
+    # of the project under check. Skipped by exact path, not by directory: the
+    # target's own .github/workflows/* stay in the inventory as "ci" input.
+    AGENT_OWN_FILES = {".github/workflows/ib-check.yml"}
+    # First match wins: "ci" (matched by path prefix) must precede "config",
+    # otherwise every workflow .yml is claimed by its suffix first.
+    INVENTORY_CATEGORIES = (
+        ("ci", (".github/workflows",)),
+        ("code", (".py",)),
+        ("config", (".json", ".toml", ".ini", ".cfg", ".yml", ".yaml", ".conf", ".env")),
+        ("dependencies", ("requirements.txt", "requirements.in", "requirements.lock", "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "Pipfile.lock", "poetry.lock")),
+        ("docs", (".md", ".txt", ".docx", ".rst", ".pdf")),
+        ("templates", (".html", ".htm")),
+        ("static", (".js", ".css", ".svg", ".png", ".jpg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".map")),
+        ("locale", (".po", ".mo")),
+        ("shell", (".sh", ".ps1", ".bat", ".cmd")),
+    )
+
+    def index_inventory(self) -> dict:
+        """Every regular file in the project (except VCS/cache/runtime dirs)
+        with size and coarse category. This is the agent's proof that the
+        WHOLE project was enumerated (not just the diff) and the basis for
+        per-requirement file selection in the LLM context builder."""
+        files: list[dict] = []
+        by_category: dict[str, dict] = {}
+        for path in sorted(self.root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(self.root)
+            if any(part in self.INVENTORY_SKIP_DIRS for part in rel.parts):
+                continue
+            rel_s = rel.as_posix()
+            if rel_s in self.AGENT_OWN_FILES:
+                continue
+            category = "other"
+            for cat, markers in self.INVENTORY_CATEGORIES:
+                if cat == "dependencies" and path.name in markers:
+                    category = cat
+                    break
+                if cat == "ci" and rel_s.startswith(markers):
+                    category = cat
+                    break
+                if cat not in ("dependencies", "ci") and path.suffix.lower() in markers:
+                    category = cat
+                    break
+            size = path.stat().st_size
+            files.append({"path": rel_s, "size": size, "category": category})
+            bucket = by_category.setdefault(category, {"files": 0, "bytes": 0})
+            bucket["files"] += 1
+            bucket["bytes"] += size
+        return {"files": files, "total_files": len(files), "total_bytes": sum(f["size"] for f in files), "by_category": by_category}
 
     # ---------- guard/decorator body resolution ----------
 
@@ -970,7 +1108,7 @@ class Indexer:
                         snippet = ast.get_source_segment(source, node)
                     except Exception:
                         snippet = None
-                    out[name] = {"file": str(path.relative_to(self.root)), "line": node.lineno, "source": snippet}
+                    out[name] = {"file": path.relative_to(self.root).as_posix(), "line": node.lineno, "source": snippet}
                     # one more hop: guard-like calls made from inside this
                     # guard's own body (e.g. admin_required -> administrator())
                     for sub in ast.walk(node):
@@ -1011,14 +1149,21 @@ class Indexer:
                 model_coverage = self.compute_model_coverage(models, signal_wiring)
             else:
                 self.note("models", "INSTALLED_APPS not statically resolvable")
+        def rel_or_none(dotted):
+            p = self.module_to_file(dotted) if dotted else None
+            return p.relative_to(self.root).as_posix() if p else None
+
         return {
             "meta": {
                 "root": str(self.root),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "settings_module": settings_module,
+                "settings_file": rel_or_none(settings_module),
                 "urlconf_module": urlconf_module,
+                "urlconf_file": rel_or_none(urlconf_module),
                 "search_roots": [str(p) for p in self.search_roots],
             },
+            "inventory": self.index_inventory(),
             "settings": settings_index,
             "routes": routes,
             "guard_definitions": self.index_guard_definitions(routes),

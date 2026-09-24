@@ -16,6 +16,7 @@ Run with:
 """
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -121,7 +122,7 @@ class AnalyzerAgainstRealIndexTests(unittest.TestCase):
 
         self.assertEqual(len(result.violations), 0)
         self.assertEqual(len(result.rejected), 1)
-        self.assertIn("hallucinated", result.rejected[0].reason)
+        self.assertIn("галлюцинация", result.rejected[0].reason)
         # a claimed "violation" status with zero grounded findings must not
         # collapse to a false "pass" - it must be visibly insufficient_data
         self.assertEqual(result.status, "insufficient_data")
@@ -147,7 +148,7 @@ class AnalyzerAgainstRealIndexTests(unittest.TestCase):
         self.assertEqual(result.rejected, [])
         self.assertEqual(result.status, "insufficient_data")
         self.assertIsNotNone(result.insufficient_data_reason)
-        self.assertIn("empty", result.insufficient_data_reason)
+        self.assertIn("пуст", result.insufficient_data_reason)
 
     # ---------- missing location is rejected ----------
 
@@ -168,7 +169,7 @@ class AnalyzerAgainstRealIndexTests(unittest.TestCase):
 
         self.assertEqual(len(result.violations), 0)
         self.assertEqual(len(result.rejected), 1)
-        self.assertIn("missing or malformed location", result.rejected[0].reason)
+        self.assertIn("нет корректного местоположения", result.rejected[0].reason)
         self.assertEqual(result.status, "insufficient_data")
 
     # ---------- clean pass ----------
@@ -403,6 +404,23 @@ class Ib08EvidenceTests(unittest.TestCase):
         self.assertTrue(any(a["name"] == "portal.audit.record" for a in by_view["export_csv"]["audit_calls"]))
         self.assertNotIn("portal.access.admin_required", by_view["export_json"]["decorators"])
         self.assertEqual(by_view["export_json"]["audit_calls"], [])
+
+
+class AgentOwnWorkflowNotSentToModelTests(unittest.TestCase):
+    def test_ib03_selects_target_workflow_but_not_agent_workflow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = Path(tmp) / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (wf / "ib-check.yml").write_text("name: ib-security-check\n", encoding="utf-8")
+            (wf / "deploy.yml").write_text("name: deploy\n", encoding="utf-8")
+            index = Indexer(Path(tmp)).build()
+        own, target = ".github/workflows/ib-check.yml", ".github/workflows/deploy.yml"
+        selected = analyzer.select_source_files("IB-03", index)
+        self.assertIn(target, selected)
+        self.assertNotIn(own, selected)
+        # need_files can't pull it in either, and the model's file map never lists it
+        self.assertNotIn(own, analyzer.select_source_files("IB-03", index, extra=[own]))
+        self.assertFalse(any(f.startswith(own) for f in analyzer.project_map(index)["files"]))
 
 
 if __name__ == "__main__":

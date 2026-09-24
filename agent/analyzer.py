@@ -1,79 +1,55 @@
 """Per-requirement LLM analysis (IB-check agent, module 3).
 
-Design (see the accompanying conversation for the full rationale):
+Design:
 
-- One LLM call per IB requirement, not per finding-candidate. Module 2
-  (agent/indexer.py) already enumerates every candidate deterministically
-  and attaches labeled file+line evidence to it; the model's job is to
-  JUDGE that pre-assembled evidence, not to search the codebase. That
-  collapses what would otherwise be dozens of tiny per-route/per-model
-  calls into 8 calls total, which matters directly for the 30-minute
-  wall-clock budget in docs/05-agent-architecture.md.
+- One LLM call per IB requirement (plus at most one follow-up round when
+  the model asks for extra files), not per finding-candidate. Module 2
+  (agent/indexer.py) enumerates candidates deterministically; module 3a
+  (agent/rules.py) turns the unambiguous ones into confirmed findings.
+  The model receives BOTH: the structured evidence AND the real source
+  of the files relevant to the requirement (numbered lines, within a
+  character budget), plus the rule findings as established facts. Its
+  job: confirm/refine, find what rules cannot see, and never contradict
+  a fact without citing counter-evidence.
 
-- The model never states its own `requirement_id`, `requirement_text`,
-  or `evidence` text. Those are stamped on by this module from a fixed
-  table (matching docs/02-ib-requirements.md's own wording) and by
-  re-reading the real source file at the location the model reports -
-  never generated or transcribed by the model itself. This guarantees
-  the code snippet in the final report is always byte-exact truth, and
-  removes any risk of the model paraphrasing the requirement text
-  inconsistently between calls.
+- The model never states `requirement_id`, `requirement_text` or the
+  code `evidence` snippet. Those come from requirements_ru.py and from
+  re-reading the real file at the reported (file, line).
 
-- "No real file+line location -> doesn't count" (TZ Sec.4.6.4) is enforced
-  mechanically here, not left to the model to remember: every violation
-  the model reports must resolve to a (file, line) pair that was
-  actually present in the evidence bundle sent to it for that call. A
-  violation that fails this (missing location, hallucinated location,
-  bad severity value) is dropped and logged as rejected, never silently
-  kept or silently promoted to a false "pass".
+- "No real file+line -> doesn't count" (ТЗ 4.6.4) is enforced here:
+  every model-reported location must be inside the evidence sent to it
+  (structured rows or an included source file). Anything else is
+  rejected and logged, never silently kept or promoted to "pass".
 
-Known current limitation, stated up front rather than discovered later:
-no LLM API credentials or SDK are available in this development
-environment (checked: no ANTHROPIC_API_KEY-shaped env var, `anthropic`
-package not installed). Everything in this module except the actual
-network call has been exercised against a real project via
-MockLLMClient (see agent/tests/test_analyzer.py) - the AnthropicClient
-class is written to the real API shape but has not been run against the
-live API. That is the one part of module 3 not yet proven end-to-end.
+- Whole-project completeness under a context limit (ТЗ 4.4.4): the
+  project inventory (every file) is always in the prompt; per-requirement
+  file pre-selection picks the relevant sources; the model may request
+  additional files by path (`need_files`) for one more round; results
+  are aggregated per requirement, then across requirements by module 4.
 """
 from __future__ import annotations
 
 import json
+import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+import requirements_ru
+
 ALLOWED_SEVERITIES = ("critical", "high", "medium", "low")
 DEFAULT_SEVERITY = "medium"
+DEFAULT_SOURCE_BUDGET_CHARS = 240_000   # ≈ 60–80k токенов; DeepSeek/Qwen держат больше, но так быстрее и дешевле
+MAX_FILE_CHARS = 120_000               # один файл больше этого — усекается с пометкой
+EXTRA_ROUND_BUDGET_CHARS = 160_000
 
 
 # ---------------------------------------------------------------------------
 # Requirement table - text stamped onto every finding, never model-generated
 # ---------------------------------------------------------------------------
 
-IB_REQUIREMENTS: dict[str, str] = {
-    "IB-01": "Admin functionality (user/role/permission/system-settings/export management) must be "
-             "restricted to the 'administrator' role, enforced server-side on every request; "
-             "client-side hiding does not satisfy this requirement.",
-    "IB-02": "Session or token validity must be checked server-side on every request to a protected "
-             "endpoint, including API endpoints.",
-    "IB-03": "Client-server traffic must be protected in transit via TLS 1.2 or higher with strong "
-             "cipher suites only; configuration allowing plaintext or weak/old TLS is a violation.",
-    "IB-04": "Personal data (full name, login, email, password) must be stored per СТ РК 1073-2007 "
-             "cryptographic protection level; passwords specifically must use only bcrypt/argon2/scrypt, "
-             "never plaintext or a fast general-purpose hash without an adaptive KDF.",
-    "IB-05": "Local application logs must be encrypted at rest and protected from tampering by a normal "
-             "OS user before being sent to the server.",
-    "IB-06": "Project documentation (README/ТЗ) must reference: the Law on Cybersecurity "
-             "(24.11.2015 №418-V), the Law on Personal Data (21.05.2013 №94-V), Government resolution "
-             "№832 (20.12.2016), СТ РК ISO/IEC 27001-2023, СТ РК ISO/IEC 27002-2023, and СТ РК 1073-2007.",
-    "IB-07": "A single, unified user-action log and DB-event log must cover the whole project (all "
-             "data-mutating models/entities and all login/logout/failed-login events), not just part "
-             "of it.",
-    "IB-08": "PII exports must be restricted to the 'administrator' role and every export must be "
-             "recorded in the audit log; both the role check and the audit-log write are required "
-             "independently for every export endpoint.",
-}
+IB_REQUIREMENTS: dict[str, str] = {rid: requirements_ru.text(rid) for rid in requirements_ru.ORDER}
 
 
 # ---------------------------------------------------------------------------
@@ -98,21 +74,15 @@ class MockLLMClient:
 
 
 class AnthropicClient:
-    """Real client, written to the current Messages API shape. NOT run
-    against the live API in this environment - no credentials or SDK
-    are available here (see module docstring). Wiring this up when a
-    key exists should only require `pip install anthropic` and setting
-    ANTHROPIC_API_KEY; no other code in this module changes.
-    """
+    """Anthropic Messages API через официальный SDK (не используется по
+    умолчанию — организатор допустил DeepSeek/Qwen, см. llm_client.py)."""
 
-    def __init__(self, model: str = "claude-sonnet-5", api_key: str | None = None, max_tokens: int = 4096):
+    def __init__(self, model: str = "claude-sonnet-4-5", api_key: str | None = None, max_tokens: int = 8192):
         import os
         try:
             import anthropic
         except ImportError as exc:
-            raise RuntimeError(
-                "anthropic package is not installed. Run: pip install anthropic"
-            ) from exc
+            raise RuntimeError("anthropic package is not installed. Run: pip install anthropic") from exc
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             raise RuntimeError("ANTHROPIC_API_KEY not set and no api_key passed")
@@ -122,29 +92,14 @@ class AnthropicClient:
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         response = self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system_prompt,
+            model=self.model, max_tokens=self.max_tokens, system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
         return "".join(block.text for block in response.content if block.type == "text")
 
 
 # ---------------------------------------------------------------------------
-# Evidence-bundle builders - one per requirement. Each selects curated
-# top-level index.json fields (never the whole index) plus, where doing
-# so doesn't risk hiding the very thing the model needs to judge, a
-# filtered subset of rows (as IB-07 already does for bulk_orm_calls).
-#
-# IB-01/IB-02 deliberately do NOT pre-filter the route list to a
-# "looks admin-y" / "looks protected" subset: deciding WHICH routes
-# constitute admin functionality (IB-01) or a protected endpoint (IB-02)
-# is itself part of what the model must judge. Pre-filtering by name
-# risks silently dropping the one route a target project renamed.
-# IB-08 is the exception - docs/02 gives an unambiguous, checkable
-# definition ("every export/download endpoint... that returns PII"), so
-# filtering routes by that specific pattern is a curation decision, not
-# a guess.
+# Evidence-bundle builders - one per requirement (structured part).
 # ---------------------------------------------------------------------------
 
 def _slim_route(r: dict, keys: tuple[str, ...]) -> dict:
@@ -153,18 +108,11 @@ def _slim_route(r: dict, keys: tuple[str, ...]) -> dict:
 
 _ROUTE_KEYS_FOR_GUARD_ANALYSIS = (
     "pattern", "name", "view_module", "view_function", "view_file", "view_line",
-    "url_level_wrappers", "decorators", "body_guard_calls",
+    "url_level_wrappers", "decorators", "body_guard_calls", "audit_calls",
 )
 
 
 def build_evidence_ib01(index: dict) -> dict:
-    """IB-01: admin-function access control. Full route list (see module
-    note above on why routes aren't pre-filtered) plus guard_definitions
-    (the real body of every project-local guard referenced anywhere -
-    without this the model would only see decorator NAMES, not whether
-    a given guard checks role=='administrator' or something weaker like
-    is_staff) plus INSTALLED_APPS for the built-in admin-panel check.
-    """
     routes = [_slim_route(r, _ROUTE_KEYS_FOR_GUARD_ANALYSIS) for r in index.get("routes", [])]
     return {
         "routes": routes,
@@ -174,32 +122,20 @@ def build_evidence_ib01(index: dict) -> dict:
 
 
 def build_evidence_ib02(index: dict) -> dict:
-    """IB-02: server-side session/token validation on every request,
-    including APIs. Full route list (same reasoning as IB-01) plus the
-    full token_lifecycle bundle for the custom Bearer-token scheme, plus
-    MIDDLEWARE to confirm AuthenticationMiddleware is actually wired in
-    project-wide rather than assumed.
-    """
     routes = [_slim_route(r, _ROUTE_KEYS_FOR_GUARD_ANALYSIS) for r in index.get("routes", [])]
     return {
         "routes": routes,
         "token_lifecycle": index.get("token_lifecycle", {}),
         "middleware": index.get("settings", {}).get("MIDDLEWARE", {}).get("value"),
+        "session_settings": {k: index.get("settings", {}).get(k) for k in ("SESSION_COOKIE_AGE", "SESSION_COOKIE_HTTPONLY", "SESSION_COOKIE_SAMESITE", "SESSION_EXPIRE_AT_BROWSER_CLOSE") if k in index.get("settings", {})},
     }
 
 
 def build_evidence_ib03(index: dict) -> dict:
-    """IB-03: transport security. Config-only requirement, no routes or
-    models needed. Pulls only the specific settings.py flags this
-    requirement bears on (not the whole settings dict, which also has
-    unrelated things like AUTH_PASSWORD_VALIDATORS) plus the full
-    auxiliary_configs (proxy.json), since this project's actual
-    TLS/redirect behavior is split across both files - settings.py
-    alone would be a misleadingly incomplete picture.
-    """
     keys = (
         "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SECURE_SSL_REDIRECT",
-        "SECURE_HSTS_SECONDS", "SECURE_PROXY_SSL_HEADER", "SECURE_CONTENT_TYPE_NOSNIFF",
+        "SECURE_HSTS_SECONDS", "SECURE_HSTS_INCLUDE_SUBDOMAINS", "SECURE_PROXY_SSL_HEADER", "SECURE_CONTENT_TYPE_NOSNIFF",
+        "ALLOWED_HOSTS", "DEBUG",
     )
     settings = index.get("settings", {})
     return {
@@ -209,13 +145,6 @@ def build_evidence_ib03(index: dict) -> dict:
 
 
 def build_evidence_ib04(index: dict) -> dict:
-    """IB-04: crypto protection of PII at rest. PASSWORD_HASHERS for the
-    password half; models[] filtered down to ONLY the PII-flagged fields
-    of each model (the non-PII fields of e.g. Ticket are noise for this
-    requirement specifically) for the storage half; password_bypass_writes
-    for the "legacy path bypasses hashing" detect target docs/02 names
-    explicitly.
-    """
     pii_models = []
     for m in index.get("models", []):
         pii_fields = [f for f in m.get("fields", []) if f.get("pii_name_hint")]
@@ -224,48 +153,32 @@ def build_evidence_ib04(index: dict) -> dict:
                 "app_dir": m["app_dir"], "file": m["file"], "class_name": m["class_name"],
                 "line": m["line"], "pii_fields": pii_fields,
             })
+    settings = index.get("settings", {})
     return {
-        "password_hashers": index.get("settings", {}).get("PASSWORD_HASHERS", {}),
+        "password_hashers": settings.get("PASSWORD_HASHERS", {}),
+        "auth_user_model": settings.get("AUTH_USER_MODEL", {}),
+        "databases": settings.get("DATABASES", {}),
+        "storages": settings.get("STORAGES", {}),
         "pii_flagged_model_fields": pii_models,
         "password_bypass_writes": index.get("password_bypass_writes", []),
     }
 
 
 def build_evidence_ib05(index: dict) -> dict:
-    """IB-05: local log protection. log_protection{} already contains
-    everything needed (local_acl_configure_calls + audit_functions);
-    nothing else in the index bears on this requirement, so this is the
-    one builder that's a straight pass-through of a single section.
-    """
-    return {"log_protection": index.get("log_protection", {})}
+    return {
+        "log_protection": index.get("log_protection", {}),
+        "logging_setting": index.get("settings", {}).get("LOGGING", {}),
+        "log_key_setting": index.get("settings", {}).get("LOG_KEY_FILE", {}),
+    }
 
 
 def build_evidence_ib06(index: dict) -> dict:
-    """IB-06: regulatory references in docs. regulatory_references{} is
-    already a fully-resolved deterministic result (line-level evidence
-    per reference, computed by agent/indexer.py, not by this module) -
-    there is arguably little left for the model to judge here beyond
-    confirming it, but it still goes through the same call-per-requirement
-    path so every requirement gets a requirements_status entry produced
-    the same, auditable way.
-    """
     return {"regulatory_references": index.get("regulatory_references", {})}
 
 
 def build_evidence_ib08(index: dict) -> dict:
-    """IB-08: PII export control. Unlike IB-01/02, docs/02 gives an
-    unambiguous, checkable definition here ("every export/download
-    endpoint... that returns PII"), so filtering routes to ones whose
-    view function or URL pattern contains export/download/print is a
-    curation decision grounded in the requirement's own wording, not a
-    guess that risks hiding the target route. Includes decorators,
-    body_guard_calls, AND audit_calls together so the model can judge
-    the role check and the audit-log write independently, per route, as
-    IB-08 explicitly requires (one without the other is still a
-    violation).
-    """
-    hints = ("export", "download", "print")
-    keys = ("pattern", "view_function", "view_file", "view_line", "decorators", "body_guard_calls", "audit_calls")
+    hints = ("export", "download", "print", "csv", "xlsx", "dump", "people", "directory")
+    keys = ("pattern", "view_function", "view_file", "view_line", "url_level_wrappers", "decorators", "body_guard_calls", "audit_calls")
     routes = []
     for r in index.get("routes", []):
         name_blob = f"{r.get('view_function','')} {r.get('pattern','')}".lower()
@@ -278,17 +191,10 @@ def build_evidence_ib08(index: dict) -> dict:
 
 
 def build_evidence_ib07(index: dict) -> dict:
-    """IB-07: unified user-action + DB-event log, whole project.
-
-    Deliberately pre-filters bulk_orm_calls to only the
-    `looks_like_queryset: true` candidates (3 of 16 in this project) -
-    the other 13 are non-ORM `.update()` calls (dict/context/kwargs)
-    that would only waste tokens and risk distracting the model from
-    the real candidates.
-    """
     bulk_candidates = [h for h in index.get("bulk_orm_calls", []) if h.get("looks_like_queryset")]
     coverage = index.get("model_audit_coverage", [])
     uncovered = [m for m in coverage if not m.get("covered_by_post_save_post_delete_signals")]
+    routes = [_slim_route(r, ("pattern", "view_function", "view_file", "view_line", "audit_calls")) for r in index.get("routes", [])]
     return {
         "signal_connections": index.get("signal_wiring", {}).get("connections", []),
         "handler_app_label_filters": index.get("signal_wiring", {}).get("handler_app_label_filters", {}),
@@ -296,6 +202,10 @@ def build_evidence_ib07(index: dict) -> dict:
         "model_count_uncovered": len(uncovered),
         "uncovered_models": uncovered,
         "bulk_orm_bypass_candidates": bulk_candidates,
+        "routes_with_audit_calls": routes,
+        "middleware": index.get("settings", {}).get("MIDDLEWARE", {}).get("value"),
+        "databases": index.get("settings", {}).get("DATABASES", {}),
+        "logging_setting": index.get("settings", {}).get("LOGGING", {}),
     }
 
 
@@ -311,17 +221,132 @@ EVIDENCE_BUILDERS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Source selection per requirement (context builder, ТЗ 4.4.4)
+# ---------------------------------------------------------------------------
+
+SOURCE_PATTERNS: dict[str, list[str]] = {
+    # порядок = приоритет включения в контекст
+    "IB-01": [r"urls\.py$", r"(^|/)(access|permissions?|decorators?|guards?)\.py$", r"(^|/)views(/|\.py$)", r"middleware", r"settings\.py$", r"templates/.*(manage|admin|base|nav).*\.html$"],
+    "IB-02": [r"urls\.py$", r"(^|/)views(/|\.py$)", r"(^|/)(api|auth\w*|tokens?|access|permissions?)\.py$", r"middleware", r"settings\.py$"],
+    "IB-03": [r"settings\.py$", r"^[^/]*\.json$", r"(^|/)(serve|server|proxy|gateway|wsgi|asgi|run\w*)\.py$", r"(nginx|apache|caddy|traefik).*\.conf$", r"docker-compose.*\.ya?ml$", r"Dockerfile", r"\.github/workflows/.*\.ya?ml$"],
+    "IB-04": [r"(^|/)models\.py$", r"(^|/)hashers?\.py$", r"settings\.py$", r"(^|/)storage\w*\.py$", r"(^|/)(seed|fixtures?|initial)\w*\.py$", r"management/commands/.*\.py$", r"(^|/)setup\w*\.py$"],
+    "IB-05": [r"(^|/)(audit|journal|logs?|logging|events?)\w*\.py$", r"(^|/)(local_acl|acl|permissions_fs|filesystem)\w*\.py$", r"(^|/)collector\w*\.py$", r"(^|/)setup\w*\.py$", r"settings\.py$", r"(^|/)serve\.py$"],
+    "IB-06": [r"^README\.md$", r"^docs/.*\.(md|txt)$"],
+    "IB-07": [r"(^|/)(audit|journal|logs?|events?)\w*\.py$", r"(^|/)apps\.py$", r"middleware", r"(^|/)views(/|\.py$)", r"urls\.py$", r"settings\.py$", r"(^|/)collector\w*\.py$", r"(^|/)signals\.py$", r"management/commands/(db_access|.*audit.*)\.py$"],
+    "IB-08": [r"(^|/)views(/|\.py$)", r"urls\.py$", r"(^|/)(access|permissions?)\.py$", r"(^|/)(audit|journal)\w*\.py$", r"(^|/)(export|report)\w*\.py$"],
+}
+# файлы библиотечного форка (src/helpdesk) подключаются только по явному запросу модели,
+# кроме тех, на которые ссылаются маршруты проекта
+LIBRARY_DIR_RE = re.compile(r"^src/")
+
+
+def _numbered(text: str, max_chars: int) -> tuple[str, int, bool]:
+    lines = text.splitlines()
+    out_lines = []
+    used = 0
+    truncated = False
+    for i, line in enumerate(lines, start=1):
+        s = f"{i:5d}| {line}"
+        if used + len(s) + 1 > max_chars:
+            truncated = True
+            break
+        out_lines.append(s)
+        used += len(s) + 1
+    if truncated:
+        out_lines.append(f"      | … файл усечён: показано {len(out_lines)} из {len(lines)} строк …")
+    return "\n".join(out_lines), len(lines), truncated
+
+
+def project_map(index: dict) -> dict:
+    inv = index.get("inventory", {}) or {}
+    files = inv.get("files", [])
+    keep = [f for f in files if f["category"] in ("code", "config", "dependencies", "ci", "docs", "shell")]
+    return {
+        "total_files": inv.get("total_files"),
+        "by_category": inv.get("by_category"),
+        "files": [f"{f['path']} ({f['size']} B)" for f in keep],
+        "note": "Полный перечень файлов кода/конфигурации/документации проекта. Шаблоны, статика и локали перечислены только в by_category; любой файл можно запросить через need_files.",
+    }
+
+
+def select_source_files(requirement_id: str, index: dict, extra: list[str] | None = None) -> list[str]:
+    inv = index.get("inventory", {}) or {}
+    all_paths = [f["path"] for f in inv.get("files", [])]
+    chosen: list[str] = []
+    route_files = {r.get("view_file") for r in index.get("routes", []) if r.get("view_file")}
+    guard_files = {d.get("file") for d in (index.get("guard_definitions") or {}).values() if d.get("file")}
+    meta = index.get("meta", {})
+    always = [p for p in (meta.get("settings_file"), meta.get("urlconf_file")) if p]
+    for p in always:
+        if p not in chosen:
+            chosen.append(p)
+    for rx in SOURCE_PATTERNS.get(requirement_id, []):
+        crx = re.compile(rx)
+        for path in sorted(all_paths):
+            if LIBRARY_DIR_RE.match(path) and path not in route_files and path not in guard_files:
+                continue
+            if crx.search(path) and path not in chosen:
+                chosen.append(path)
+    for p in sorted(route_files | guard_files):
+        if requirement_id in ("IB-01", "IB-02", "IB-07", "IB-08") and p not in chosen:
+            chosen.append(p)
+    for p in extra or []:
+        if p in all_paths and p not in chosen:
+            chosen.append(p)
+    return chosen
+
+
+def attach_sources(evidence: dict, index: dict, project_root: Path, requirement_id: str,
+                   budget_chars: int = DEFAULT_SOURCE_BUDGET_CHARS, extra: list[str] | None = None) -> dict:
+    """Добавляет в evidence реальные исходники (нумерованные строки) в пределах бюджета."""
+    files = select_source_files(requirement_id, index, extra)
+    sources: dict[str, dict] = dict(evidence.get("source_files") or {})
+    used = sum(len(v["content"]) for v in sources.values())
+    skipped: list[str] = []
+    for rel in files:
+        if rel in sources:
+            continue
+        path = project_root / rel
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            skipped.append(rel)
+            continue
+        remaining = budget_chars - used
+        if remaining <= 2000:
+            skipped.append(rel)
+            continue
+        content, total_lines, truncated = _numbered(text, min(MAX_FILE_CHARS, remaining))
+        sources[rel] = {"lines": total_lines, "truncated": truncated, "content": content}
+        used += len(content)
+    evidence["source_files"] = sources
+    evidence["source_files_skipped_by_budget"] = skipped
+    evidence["project_map"] = project_map(index)
+    return evidence
+
+
 def collect_known_locations(evidence: dict) -> set[tuple[str, int]]:
     """Every (file, line) pair present anywhere in the evidence bundle -
-    the allowlist a model-reported violation location must belong to."""
+    the allowlist a model-reported violation location must belong to.
+    Included source files contribute every line 1..N (or 1..shown)."""
     found: set[tuple[str, int]] = set()
 
     def walk(obj):
         if isinstance(obj, dict):
             if "file" in obj and "line" in obj and isinstance(obj.get("line"), int):
                 found.add((obj["file"], obj["line"]))
-            for v in obj.values():
-                walk(v)
+            if "view_file" in obj and isinstance(obj.get("view_line"), int):
+                found.add((obj["view_file"], obj["view_line"]))
+            for k, v in obj.items():
+                if k == "source_files" and isinstance(v, dict):
+                    for rel, info in v.items():
+                        shown = info.get("content", "").count("\n") + 1
+                        n = min(info.get("lines", 0), shown) if info.get("truncated") else info.get("lines", 0)
+                        for i in range(1, (n or 0) + 1):
+                            found.add((rel, i))
+                else:
+                    walk(v)
         elif isinstance(obj, list):
             for v in obj:
                 walk(v)
@@ -331,51 +356,59 @@ def collect_known_locations(evidence: dict) -> set[tuple[str, int]]:
 
 
 # ---------------------------------------------------------------------------
-# Prompting
+# Prompting (русский язык — язык ТЗ и экспертной комиссии)
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are an information-security compliance analyst reviewing a Django \
-project against one mandatory security requirement at a time. You are given pre-extracted, \
-structured evidence about the project - you do not have access to the rest of the codebase, \
-and you must not assume anything about files not shown to you.
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 
-Rules, all mandatory:
-1. Base your judgment ONLY on the evidence provided below. Do not invent file paths, line \
-numbers, or code that is not present in the evidence.
-2. Every violation you report MUST reference a (file, line) pair that appears somewhere in \
-the evidence provided. If you believe something is wrong but cannot point to a specific \
-location already present in the evidence, do not report it as a violation - explain it in \
-`summary` instead, or set status to "insufficient_data" with a reason.
-3. Do not restate the requirement text or invent a requirement ID - that is added separately.
-4. Do not write a code snippet yourself - only report the location; the exact snippet will \
-be extracted independently from the real source file.
-5. Respond with ONLY a single JSON object matching the schema below. No prose outside the \
-JSON, no markdown code fences.
-
-Output schema:
-{
-  "status": "pass" | "violation" | "insufficient_data",
-  "summary": "one or two sentences, the overall verdict for this requirement",
-  "violations": [
-    {
-      "location": {"file": "<exact file path from the evidence>", "line": <exact line number from the evidence>, "function": "<function/class name if known, else null>"},
-      "justification": "<precisely what is non-compliant and why, referencing the evidence>",
-      "severity": "critical" | "high" | "medium" | "low",
-      "recommendation": "<concrete fix>"
-    }
-  ],
-  "insufficient_data_reason": null or "<why you could not reach pass/violation>"
-}"""
+# Системная подсказка и навыки проверки хранятся отдельными файлами
+# (состав сдаваемых материалов, п. 1.1) — единственный источник истины.
+SYSTEM_PROMPT = (PROMPTS_DIR / "system.md").read_text(encoding="utf-8").strip()
 
 
-def build_user_prompt(requirement_id: str, requirement_text: str, evidence: dict) -> str:
-    return (
-        f"Requirement {requirement_id}: {requirement_text}\n\n"
-        "Evidence (structured, extracted deterministically from the project - "
-        "file/line locations here are the ONLY ones you may cite):\n"
-        f"{json.dumps(evidence, indent=2, ensure_ascii=False)}\n\n"
-        "Return the JSON object described in the system prompt now."
+def load_skill(requirement_id: str) -> str:
+    path = SKILLS_DIR / f"{requirement_id}.md"
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def build_user_prompt(requirement_id: str, requirement_text: str, evidence: dict,
+                      rule_findings: list[dict] | None = None, round_no: int = 1, note: str | None = None) -> str:
+    req = requirements_ru.REQUIREMENTS.get(requirement_id, {})
+    header = (
+        f"Requirement {requirement_id}: {req.get('title', '')}\n"
+        f"Идентификатор по ТЗ: {req.get('display_id', requirement_id)}. Связанные пункты: {', '.join(req.get('spec_refs', []))}.\n"
+        f"Текст требования: {requirement_text}\n\n"
     )
+    parts = [header]
+    skill = load_skill(requirement_id)
+    if skill:
+        parts.append("=== Навык проверки (методика для этого требования) ===\n" + skill + "\n\n")
+    if note:
+        parts.append(f"Примечание к раунду {round_no}: {note}\n\n")
+    parts.append("=== rule_findings (установленные факты; подтверди или оспорь в rule_findings_review) ===\n")
+    parts.append(json.dumps(rule_findings or [], indent=1, ensure_ascii=False) + "\n\n")
+    structured = {k: v for k, v in evidence.items() if k not in ("source_files", "project_map", "source_files_skipped_by_budget")}
+    parts.append("=== Структурированные данные статического индекса (file/line отсюда допустимы для ссылок) ===\n")
+    parts.append(json.dumps(structured, indent=1, ensure_ascii=False, default=str) + "\n\n")
+    pm = evidence.get("project_map")
+    if pm:
+        parts.append("=== project_map: все файлы кода/конфигурации/документации проекта ===\n")
+        parts.append(json.dumps(pm, indent=1, ensure_ascii=False) + "\n\n")
+    skipped = evidence.get("source_files_skipped_by_budget") or []
+    if skipped:
+        parts.append(f"Файлы, не включённые из-за бюджета контекста (можно запросить через need_files): {skipped}\n\n")
+    sources = evidence.get("source_files") or {}
+    if sources:
+        parts.append("=== Исходники релевантных файлов (номер строки | текст) ===\n")
+        for rel, info in sources.items():
+            parts.append(f"\n----- {rel} ({info.get('lines')} строк{', усечён' if info.get('truncated') else ''}) -----\n")
+            parts.append(info.get("content", "") + "\n")
+    parts.append("\nВерни JSON-объект по схеме из системной подсказки.")
+    return "".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +422,12 @@ class Violation:
     severity: str
     recommendation: str
     evidence_snippet: str
+    source: str = "llm"                     # llm | rule:<rule_id> | rule+llm
+    confidence: str = "likely"              # confirmed | likely
+    rule_id: str | None = None
+    related_locations: list = field(default_factory=list)
+    spec_refs: list = field(default_factory=list)
+    llm_comment: str | None = None
 
 
 @dataclass
@@ -401,18 +440,21 @@ class RejectedCandidate:
 class AnalysisResult:
     requirement_id: str
     requirement_text: str
-    status: str  # "pass" | "violation" | "insufficient_data"
+    status: str  # "pass" | "violation" | "insufficient_data" | "not_checked"
     summary: str
     violations: list[Violation] = field(default_factory=list)
     rejected: list[RejectedCandidate] = field(default_factory=list)
     insufficient_data_reason: str | None = None
     raw_model_output: str = ""
     parse_error: str | None = None
+    spec_gaps: list[dict] = field(default_factory=list)
+    disputed: list[dict] = field(default_factory=list)      # rule findings оспоренные моделью (с counter_evidence)
+    checked_files: list[str] = field(default_factory=list)
+    llm_rounds: int = 0
+    analysis_mode: str = "llm"                              # llm | rules-only | deterministic
 
 
 def extract_snippet(project_root: Path, file: str, line: int, context: int = 0) -> str | None:
-    """Read the real source at (file, line) - never trust the model's own
-    transcription of a code/config snippet."""
     path = project_root / file
     if not path.is_file():
         return None
@@ -427,30 +469,115 @@ def extract_snippet(project_root: Path, file: str, line: int, context: int = 0) 
     return "\n".join(lines[start:end])
 
 
+SNIPPET_MAX_LINES = 18
+
+
+def smart_snippet(project_root: Path, file: str, line: int) -> str | None:
+    """Фрагмент-доказательство: если строка — начало функции/класса (или её
+    декоратор), возвращается определение целиком с декораторами (до
+    SNIPPET_MAX_LINES строк); иначе — сама строка (байт-в-байт)."""
+    single = extract_snippet(project_root, file, line)
+    if single is None or not str(file).endswith(".py"):
+        return single
+    import ast as _ast
+    try:
+        src = (project_root / file).read_text(encoding="utf-8", errors="replace")
+        tree = _ast.parse(src)
+    except Exception:
+        return single
+    lines = src.splitlines()
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            first = min([d.lineno for d in node.decorator_list] + [node.lineno])
+            if first <= line <= node.lineno:
+                end = getattr(node, "end_lineno", node.lineno) or node.lineno
+                last = min(end, first + SNIPPET_MAX_LINES - 1)
+                chunk = lines[first - 1:last]
+                if last < end:
+                    chunk.append("    …")
+                return "\n".join(chunk)
+    return single
+
+
+def extract_json_object(raw: str) -> dict:
+    """Достаёт первый JSON-объект из ответа модели (в т.ч. в ```json … ```)."""
+    text = raw.strip()
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    if fence:
+        text = fence.group(1)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    if start < 0:
+        raise json.JSONDecodeError("no JSON object in model output", raw, 0)
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise json.JSONDecodeError("unbalanced JSON object in model output", raw, start)
+
+
+def rule_finding_to_violation(project_root: Path, rf) -> Violation:
+    d = rf.to_dict() if hasattr(rf, "to_dict") else dict(rf)
+    snippet = smart_snippet(project_root, d["file"], d.get("line") or 1) or ""
+    return Violation(
+        location={"file": d["file"], "line": d.get("line"), "function": d.get("function")},
+        justification=d["justification"], severity=d["severity"], recommendation=d["recommendation"],
+        evidence_snippet=snippet, source=f"rule:{d['rule_id']}", confidence=d.get("confidence", "confirmed"),
+        rule_id=d["rule_id"], related_locations=d.get("related_locations") or [], spec_refs=d.get("spec_refs") or [],
+    )
+
+
+def _same_place(a: dict, b: dict, tolerance: int = 3) -> bool:
+    if a.get("file") != b.get("file"):
+        return False
+    la, lb = a.get("line"), b.get("line")
+    if isinstance(la, int) and isinstance(lb, int) and abs(la - lb) <= tolerance:
+        return True
+    fa, fb = a.get("function"), b.get("function")
+    return bool(fa and fb and fa == fb)
+
+
 def analyze_ib06_deterministic(index: dict) -> AnalysisResult:
-    """IB-06 needs no LLM call: build_evidence_ib06's entire bundle is
-    already just regulatory_references, a fully-resolved deterministic
-    result computed by agent/indexer.py::index_regulatory_references
-    (line-level evidence per reference, not a bare boolean). There is no
-    remaining judgment call for a model to make - the evidence already
-    IS the verdict. Mirrors analyze_requirement's contract (same
-    AnalysisResult shape, same IB_REQUIREMENTS text) so callers can
-    treat all 8 requirements uniformly, but skips the model entirely:
-    no prompt, no JSON parsing, no location-allowlist enforcement,
-    because there is no untrusted model output to validate here.
-    """
+    """IB-06 без вызова модели: regulatory_references индекса уже содержит
+    построчные доказательства по каждому акту (README/md/txt); docx — в
+    rules.check_ib06 (сливается оркестратором)."""
     requirement_text = IB_REQUIREMENTS["IB-06"]
     rr = index.get("regulatory_references", {})
     reference_found = rr.get("reference_found", {})
     reference_evidence = rr.get("reference_evidence", {})
     searched_files = rr.get("searched_files", [])
+    docx = rr.get("docx", {}) or {}
+    docx_note = ""
+    if docx:
+        docx_note = " Документы docx: " + "; ".join(
+            f"{rel} — {'все 6 ссылок присутствуют' if d.get('all_six_present') else 'не все ссылки найдены'}" for rel, d in docx.items()
+        ) + "."
 
     if rr.get("all_six_present"):
         return AnalysisResult(
-            requirement_id="IB-06",
-            requirement_text=requirement_text,
-            status="pass",
-            summary=f"All 6 required regulatory references found in {', '.join(searched_files) or 'the searched docs'}.",
+            requirement_id="IB-06", requirement_text=requirement_text, status="pass",
+            summary=f"Все 6 требуемых ссылок на нормативные акты найдены в {', '.join(searched_files) or 'документации'}.{docx_note}",
+            checked_files=list(searched_files) + list(docx.keys()), analysis_mode="deterministic",
         )
 
     violations: list[Violation] = []
@@ -458,34 +585,39 @@ def analyze_ib06_deterministic(index: dict) -> AnalysisResult:
         if found:
             continue
         evidence_list = reference_evidence.get(key, [])
+        act = requirements_ru.REGULATORY_ACTS_RU.get(key, key)
         if evidence_list:
-            # found False but evidence present shouldn't normally happen -
-            # handle honestly rather than assume, using the real evidence
             first = evidence_list[0]
             location = {"file": first["file"], "line": first["line"], "function": None}
             snippet = first["text"]
         else:
-            # a missing reference has no line to point at - it's an
-            # absence, not a location - so location degrades honestly to
-            # the real file it should have been in, with no fabricated line
             location = {"file": searched_files[0] if searched_files else None, "line": None, "function": None}
             snippet = ""
         violations.append(Violation(
             location=location,
-            justification=f"Reference '{key}' was not found in any searched documentation file "
-                           f"({', '.join(searched_files) or 'no files were found to search'}).",
-            severity="medium",
-            recommendation=f"Add an explicit reference to {key.replace('_', ' ')} in the README or "
-                            "Tech Spec regulatory-sources section.",
-            evidence_snippet=snippet,
+            justification=f"Ссылка на «{act}» не найдена ни в одном из проверенных документов ({', '.join(searched_files) or 'файлы документации не найдены'}).",
+            severity="medium", recommendation=f"Добавить в раздел нормативных источников README наименование и ссылку: {act}.",
+            evidence_snippet=snippet, source="rule:ib06.reference_missing", confidence="confirmed", rule_id="ib06.reference_missing",
+            spec_refs=["ТЗ 4.5.6", "ТЗ 3.1"],
         ))
 
     return AnalysisResult(
-        requirement_id="IB-06",
-        requirement_text=requirement_text,
-        status="violation",
-        summary=f"{len(violations)} of 6 required regulatory references missing.",
-        violations=violations,
+        requirement_id="IB-06", requirement_text=requirement_text, status="violation",
+        summary=f"Отсутствуют {len(violations)} из 6 требуемых ссылок на нормативные акты.{docx_note}",
+        violations=violations, checked_files=list(searched_files) + list(docx.keys()), analysis_mode="deterministic",
+    )
+
+
+def rules_only_result(requirement_id: str, project_root: Path, rule_findings: list, checked: list[str] | None = None,
+                      limitations: list[str] | None = None, reason: str = "LLM не использовалась") -> AnalysisResult:
+    """Результат по требованию без модели: только детерминированные правила."""
+    violations = [rule_finding_to_violation(project_root, rf) for rf in rule_findings]
+    status = "violation" if violations else "pass"
+    summary = f"{reason}: применены только детерминированные правила (перечень проверенного — ниже)."
+    return AnalysisResult(
+        requirement_id=requirement_id, requirement_text=IB_REQUIREMENTS[requirement_id], status=status,
+        summary=summary, violations=violations, analysis_mode="rules-only",
+        insufficient_data_reason=None if violations else (f"{reason}; отсутствие нарушений по правилам не гарантирует полноту проверки" if limitations else None),
     )
 
 
@@ -494,6 +626,11 @@ def analyze_requirement(
     index: dict,
     client: LLMClient,
     project_root: Path,
+    rule_findings: list | None = None,
+    source_budget_chars: int = DEFAULT_SOURCE_BUDGET_CHARS,
+    max_rounds: int = 2,
+    include_sources: bool = True,
+    deadline: float | None = None,
 ) -> AnalysisResult:
     if requirement_id not in IB_REQUIREMENTS:
         raise ValueError(f"unknown requirement id {requirement_id!r}")
@@ -501,95 +638,153 @@ def analyze_requirement(
         raise NotImplementedError(f"evidence builder for {requirement_id} not implemented yet")
 
     requirement_text = IB_REQUIREMENTS[requirement_id]
+    rule_findings = list(rule_findings or [])
+    rule_dicts = []
+    for i, rf in enumerate(rule_findings, start=1):
+        d = rf.to_dict() if hasattr(rf, "to_dict") else dict(rf)
+        d = {"id": f"RF-{i}", **d}
+        rule_dicts.append(d)
     evidence = EVIDENCE_BUILDERS[requirement_id](index)
+    if include_sources:
+        evidence = attach_sources(evidence, index, project_root, requirement_id, source_budget_chars)
     known_locations = collect_known_locations(evidence)
 
-    user_prompt = build_user_prompt(requirement_id, requirement_text, evidence)
-    raw = client.complete(SYSTEM_PROMPT, user_prompt)
+    raw = ""
+    parsed: dict | None = None
+    rounds = 0
+    note = None
+    while rounds < max_rounds:
+        rounds += 1
+        user_prompt = build_user_prompt(requirement_id, requirement_text, evidence, rule_dicts, rounds, note)
+        raw = client.complete(SYSTEM_PROMPT, user_prompt)
+        try:
+            parsed = extract_json_object(raw)
+        except json.JSONDecodeError as exc:
+            result = AnalysisResult(
+                requirement_id=requirement_id, requirement_text=requirement_text, status="insufficient_data", summary="",
+                insufficient_data_reason=f"ответ модели не является корректным JSON: {exc}",
+                raw_model_output=raw, parse_error=str(exc), llm_rounds=rounds,
+            )
+            result.violations = [rule_finding_to_violation(project_root, rf) for rf in rule_findings]
+            if result.violations:
+                result.status = "violation"
+            return result
+        need = parsed.get("need_files") if isinstance(parsed, dict) else None
+        if need and isinstance(need, list) and rounds < max_rounds and include_sources and (deadline is None or time.monotonic() < deadline):
+            wanted = [x for x in need if isinstance(x, str)]
+            before = set(evidence.get("source_files") or {})
+            evidence = attach_sources(evidence, index, project_root, requirement_id, source_budget_chars + EXTRA_ROUND_BUDGET_CHARS, extra=wanted)
+            added = sorted(set(evidence.get("source_files") or {}) - before)
+            if not added:
+                break
+            known_locations = collect_known_locations(evidence)
+            note = f"по твоему запросу добавлены файлы: {added}. Файлы, которых нет в проекте, запросить нельзя. Дай окончательный ответ."
+            continue
+        break
 
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return AnalysisResult(
-            requirement_id=requirement_id,
-            requirement_text=requirement_text,
-            status="insufficient_data",
-            summary="",
-            insufficient_data_reason=f"model response was not valid JSON: {exc}",
-            raw_model_output=raw,
-            parse_error=str(exc),
-        )
-
+    assert parsed is not None
     claimed_status = parsed.get("status")
-    summary = parsed.get("summary", "")
+    summary = str(parsed.get("summary", "") or "")
     raw_violations = parsed.get("violations") or []
+    checked_files = [x for x in (parsed.get("checked_files") or []) if isinstance(x, str)]
 
     kept: list[Violation] = []
     rejected: list[RejectedCandidate] = []
-
     for v in raw_violations:
         loc = v.get("location") if isinstance(v, dict) else None
         file = loc.get("file") if isinstance(loc, dict) else None
         line = loc.get("line") if isinstance(loc, dict) else None
-
+        if isinstance(line, str) and line.isdigit():
+            line = int(line)
         if not file or not isinstance(line, int):
-            rejected.append(RejectedCandidate(v, "missing or malformed location (file/line required)"))
+            rejected.append(RejectedCandidate(v, "нет корректного местоположения (file/line обязательны)"))
             continue
         if (file, line) not in known_locations:
-            rejected.append(RejectedCandidate(v, f"location ({file}:{line}) was not present in the evidence given to the model - likely hallucinated"))
+            rejected.append(RejectedCandidate(v, f"местоположение ({file}:{line}) отсутствует в переданных модели данных — вероятная галлюцинация"))
             continue
-        snippet = extract_snippet(project_root, file, line)
+        snippet = smart_snippet(project_root, file, line)
         if snippet is None:
-            rejected.append(RejectedCandidate(v, f"location ({file}:{line}) does not resolve to a real, readable line in the project"))
+            rejected.append(RejectedCandidate(v, f"местоположение ({file}:{line}) не соответствует реальной строке файла"))
             continue
-
         severity = v.get("severity")
         if severity not in ALLOWED_SEVERITIES:
-            severity = DEFAULT_SEVERITY  # clamp, don't drop the whole finding over this alone
-
+            severity = DEFAULT_SEVERITY
+        confidence = v.get("confidence") if v.get("confidence") in ("confirmed", "likely") else "likely"
         kept.append(Violation(
-            location=loc,
-            justification=v.get("justification", ""),
-            severity=severity,
-            recommendation=v.get("recommendation", ""),
-            evidence_snippet=snippet,
+            location={"file": file, "line": line, "function": loc.get("function")},
+            justification=str(v.get("justification", "") or ""), severity=severity,
+            recommendation=str(v.get("recommendation", "") or ""), evidence_snippet=snippet,
+            source="llm", confidence=confidence,
         ))
 
-    # Reconcile status: never silently report "pass" if the model raised
-    # something, and never keep "violation" status with zero grounded findings.
-    # Both sub-cases of "claimed violation but nothing survived" must land
-    # here, not just the "some candidates got rejected" one - a model that
-    # claims status="violation" while listing zero items at all previously
-    # fell through to the final `else` and became a silent false "pass"
-    # (caught by manual review of this branch, not by the original tests).
-    if kept:
+    # --- слияние с правилами ---
+    rule_violations = [rule_finding_to_violation(project_root, rf) for rf in rule_findings]
+    reviews = {str(r.get("id")): r for r in (parsed.get("rule_findings_review") or []) if isinstance(r, dict)}
+    disputed: list[dict] = []
+    final_rules: list[Violation] = []
+    for i, rv in enumerate(rule_violations, start=1):
+        review = reviews.get(f"RF-{i}")
+        if review:
+            rv.llm_comment = str(review.get("comment") or "") or None
+            ce = review.get("counter_evidence")
+            if review.get("verdict") == "dispute" and rv.confidence == "likely" and isinstance(ce, dict) \
+                    and (ce.get("file"), ce.get("line")) in known_locations:
+                snippet = extract_snippet(project_root, ce["file"], ce["line"]) or ""
+                disputed.append({
+                    "rule_id": rv.rule_id, "location": rv.location, "justification": rv.justification,
+                    "counter_evidence": {"file": ce["file"], "line": ce["line"], "snippet": snippet},
+                    "comment": rv.llm_comment,
+                })
+                continue
+            if review.get("verdict") == "confirm":
+                rv.confidence = "confirmed"
+        final_rules.append(rv)
+    merged: list[Violation] = list(final_rules)
+    for lv in kept:
+        dup = next((rv for rv in merged if _same_place(rv.location, lv.location)), None)
+        if dup is not None:
+            dup.source = "rule+llm" if dup.source.startswith("rule") else dup.source
+            if lv.justification and lv.justification not in dup.justification:
+                dup.llm_comment = (dup.llm_comment + " " if dup.llm_comment else "") + lv.justification
+            if dup.confidence != "confirmed" and lv.confidence == "confirmed":
+                dup.confidence = "confirmed"
+            continue
+        merged.append(lv)
+
+    spec_gaps: list[dict] = []
+    for g in parsed.get("spec_gaps") or []:
+        if not isinstance(g, dict):
+            continue
+        loc = g.get("location") if isinstance(g.get("location"), dict) else {}
+        file, line = loc.get("file"), loc.get("line")
+        if isinstance(line, str) and line.isdigit():
+            line = int(line)
+        if not file or not isinstance(line, int) or (file, line) not in known_locations:
+            continue
+        spec_gaps.append({
+            "category": g.get("category") or "other",
+            "description": str(g.get("description", "") or ""),
+            "location": {"file": file, "line": line, "function": loc.get("function")},
+            "severity": g.get("severity") if g.get("severity") in ALLOWED_SEVERITIES else None,
+            "source": "llm", "requirement_context": requirement_id,
+        })
+
+    if merged:
         final_status = "violation"
         insufficient_reason = None
     elif claimed_status == "violation":
         final_status = "insufficient_data"
-        if rejected:
-            insufficient_reason = (
-                f"model reported {len(rejected)} violation(s) for {requirement_id} but none had a "
-                "location that could be grounded in the evidence provided - see rejected candidates"
-            )
-        else:
-            insufficient_reason = (
-                f"model reported status=\"violation\" for {requirement_id} but the violations list was empty"
-            )
+        insufficient_reason = (f"модель заявила нарушения по {requirement_id}, но ни одно не привязано к реальному месту в переданных данных ({len(rejected)} отклонено)"
+                               if rejected else f"модель заявила status=\"violation\" для {requirement_id}, но список нарушений пуст")
     elif claimed_status == "insufficient_data":
         final_status = "insufficient_data"
-        insufficient_reason = parsed.get("insufficient_data_reason") or "model reported insufficient_data with no reason given"
+        insufficient_reason = parsed.get("insufficient_data_reason") or "модель сообщила о недостатке данных без указания причины"
     else:
         final_status = "pass"
         insufficient_reason = None
 
     return AnalysisResult(
-        requirement_id=requirement_id,
-        requirement_text=requirement_text,
-        status=final_status,
-        summary=summary,
-        violations=kept,
-        rejected=rejected,
-        insufficient_data_reason=insufficient_reason,
-        raw_model_output=raw,
+        requirement_id=requirement_id, requirement_text=requirement_text, status=final_status, summary=summary,
+        violations=merged, rejected=rejected, insufficient_data_reason=insufficient_reason, raw_model_output=raw,
+        spec_gaps=spec_gaps, disputed=disputed, checked_files=checked_files, llm_rounds=rounds, analysis_mode="llm",
     )
