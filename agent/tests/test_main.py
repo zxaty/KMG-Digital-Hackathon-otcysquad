@@ -253,5 +253,29 @@ class ReportUnitTests(unittest.TestCase):
         self.assertEqual(report_mod.redact("SESSION_COOKIE_SECURE = False"), "SESSION_COOKIE_SECURE = False")
 
 
+class DotenvTests(unittest.TestCase):
+    def test_dotenv_fills_only_unset_vars(self):
+        import main
+        keys = ("IBT_NEW", "IBT_QUOTED", "IBT_PRESET")
+        saved = {k: os.environ.get(k) for k in keys}
+        try:
+            for k in keys:
+                os.environ.pop(k, None)
+            os.environ["IBT_PRESET"] = "from-env"
+            with tempfile.TemporaryDirectory() as tmp:
+                env = Path(tmp) / ".env"
+                env.write_text("# comment\nIBT_NEW=1\nIBT_QUOTED='a b'\nIBT_PRESET=from-file\nnot a pair\n", encoding="utf-8")
+                main.load_dotenv(env)
+            self.assertEqual(os.environ["IBT_NEW"], "1")
+            self.assertEqual(os.environ["IBT_QUOTED"], "a b")
+            self.assertEqual(os.environ["IBT_PRESET"], "from-env")
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
 if __name__ == "__main__":
     unittest.main()

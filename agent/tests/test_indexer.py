@@ -68,6 +68,18 @@ class IndexerAgainstRealProjectTests(unittest.TestCase):
         self.assertEqual(len(second["routes"]), len(self.index["routes"]))
         self.assertEqual(len(second["models"]), len(self.index["models"]))
 
+    def test_checker_and_ci_directories_are_excluded_from_project_scan(self):
+        """The checker must not mistake its own code/workflow for target evidence."""
+        excluded = {"agent", ".github", ".claude"}
+        scanned = list(Indexer(PROJECT_ROOT).iter_project_py_files())
+        self.assertTrue(scanned)
+        for path in scanned:
+            relative_parts = set(path.relative_to(PROJECT_ROOT).parts)
+            self.assertTrue(
+                excluded.isdisjoint(relative_parts),
+                f"self-scan regression: {path} came from an excluded directory",
+            )
+
     def test_no_unexpected_notes(self):
         known_note_substrings = (
             "could not locate module `django.contrib.auth.views`",

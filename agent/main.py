@@ -66,6 +66,21 @@ def detect_commit(root: Path) -> tuple[str, str | None]:
     return os.environ.get("GITHUB_SHA") or "unknown", branch
 
 
+def load_dotenv(path: Path) -> None:
+    """KEY=VALUE из .env; уже заданные переменные окружения не перезаписываются.
+    .env проверяемого проекта намеренно не читается: он не должен управлять агентом."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name, value = name.strip(), value.strip().strip('"').strip("'")
+        if name and name not in os.environ:
+            os.environ[name] = value
+
+
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Агент автоматизированной проверки Требований ИБ (ИБ-01…ИБ-08)")
     ap.add_argument("--project-root", default=".", help="корень проверяемого проекта")
@@ -93,6 +108,8 @@ def main(argv=None) -> int:
             stream.reconfigure(errors="replace")   # консоль Windows (cp1251/cp866) не должна ронять агента
         except (AttributeError, ValueError):
             pass
+    load_dotenv(Path.cwd() / ".env")
+    load_dotenv(AGENT_DIR / ".env")
     args = parse_args(argv)
     root = Path(args.project_root).resolve()
     started_at = datetime.now(LOCAL_TZ)

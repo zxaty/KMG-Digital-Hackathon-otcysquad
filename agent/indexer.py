@@ -54,7 +54,7 @@ SKIP_APP_PREFIXES = (
 )
 EXCLUDE_DIR_PARTS = {
     "migrations", "licenses", ".venv", "venv", "node_modules",
-    "agent", "__pycache__", ".git", "runtime",
+    "agent", ".github", ".claude", "__pycache__", ".git", "runtime",
 }
 
 

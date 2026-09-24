@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .venv/
 runtime/
+# локальные ключи API (LLM_API_KEY и т.п.) — никогда не коммитить
+.env
 # выходные файлы агента в корне; образцы в agent/reports/ — в репозитории
 /report.json
 /report.md
