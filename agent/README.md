@@ -45,13 +45,14 @@ python3 agent/main.py --project-root . --provider none --out-json report.json --
 
 | Переменная | Параметр CLI | По умолчанию | Назначение |
 |---|---|---|---|
-| `LLM_PROVIDER` | `--provider` | `deepseek` | `deepseek`, `qwen`, `openai`, `custom` (любой OpenAI-совместимый шлюз), `mock` (заглушка), `none` (без модели) |
+| `LLM_PROVIDER` | `--provider` | `deepseek` | `deepseek` или `qwen` — организатор допускает только эти модели; другие значения отклоняются (код 2). Служебные: `mock` (заглушка для тестов), `none` (без модели) |
 | `LLM_API_KEY` (или `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY`) | — | — | ключ API; в отчёт и журнал не выводится |
 | `LLM_MODEL` | `--model` | `deepseek-v4-pro` / `qwen-plus` | имя модели |
-| `LLM_BASE_URL` | `--base-url` | `https://api.deepseek.com` | базовый URL; для `qwen` и `custom` обязателен |
+| `LLM_BASE_URL` | `--base-url` | `https://api.deepseek.com` | базовый URL; для `qwen` обязателен |
 | `LLM_TIMEOUT` | — | `300` | таймаут одного запроса, с |
 | `LLM_MAX_TOKENS` | — | `8192` | максимум токенов ответа |
 | `LLM_JSON_MODE` | — | `auto` | `response_format=json_object` (при отказе провайдера — автоматически без него) |
+| `LLM_THINKING` | — | `disabled` (DeepSeek) | режим рассуждений DeepSeek: `disabled` / `enabled` / `omit`. По умолчанию выключен: рассуждения расходуют тот же `max_tokens` и при этом игнорируют `temperature` |
 | `LLM_CONCURRENCY` | `--llm-concurrency` | `3` | сколько требований одновременно отправляются модели |
 | — | `--deadline-minutes` | `25` | внутренний лимит проверки (шаг ≤ 30 мин, ТЗ 4.7.1) |
 | — | `--source-budget-chars` | `240000` | бюджет исходников на один вызов модели |

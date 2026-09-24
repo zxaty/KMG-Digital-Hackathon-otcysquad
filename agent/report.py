@@ -110,6 +110,7 @@ def build_report(*, run_result, commit: str, branch: str | None, started_at: dat
             "text": requirements_ru.text(rid), "status": res.status, "status_ru": STATUS_RU.get(res.status, res.status),
             "violations_count": len(res.violations), "summary": res.summary,
             "insufficient_data_reason": res.insufficient_data_reason,
+            "analysis_warning": getattr(res, "analysis_warning", None),
             "checked": list(run_result.checked.get(rid, [])), "checked_files": list(res.checked_files or []),
             "analysis_mode": res.analysis_mode, "llm_rounds": res.llm_rounds,
             "rejected_model_candidates": len(res.rejected),
@@ -119,7 +120,11 @@ def build_report(*, run_result, commit: str, branch: str | None, started_at: dat
     overall = "fail" if violations else "pass"
     limitations = list(run_result.limitations) + list(extra_limitations or [])
     for rid, res in results.items():
-        if res.status == "insufficient_data" and res.insufficient_data_reason:
+        analysis_warning = getattr(res, "analysis_warning", None)
+        if analysis_warning:
+            # сбой/нераспознанный ответ модели при статусе по правилам — фиксируется всегда
+            limitations.append(f"{requirements_ru.display_id(rid)}: {analysis_warning}")
+        elif res.status == "insufficient_data" and res.insufficient_data_reason:
             limitations.append(f"{requirements_ru.display_id(rid)}: {res.insufficient_data_reason}")
         if res.rejected:
             limitations.append(f"{requirements_ru.display_id(rid)}: отклонено {len(res.rejected)} кандидатов модели без подтверждённого местоположения — в отчёт не включены.")
@@ -222,6 +227,8 @@ def render_markdown(report: dict) -> str:
             lines.append(f"  - файлы, проанализированные {who}: {', '.join('`'+f+'`' for f in r['checked_files'][:25])}")
         if r.get("insufficient_data_reason"):
             lines.append(f"  - ⚠️ {_md_escape(r['insufficient_data_reason'])}")
+        if r.get("analysis_warning"):
+            lines.append(f"  - ⚠️ анализ моделью: {_md_escape(r['analysis_warning'])}")
     lines.append("")
     lines.append("## Нарушения Требований ИБ")
     lines.append("")

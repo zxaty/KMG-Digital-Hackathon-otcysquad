@@ -29,6 +29,23 @@ and hurts the accuracy score.
 - `requirements_status` — status for **all 8** requirements, including
   the ones with no findings (must be explicit "checked, clean", not
   omitted)
+- `requirements[]` (our extension) — per requirement: `status`,
+  `violations_count`, `summary`, `checked`, `checked_files`,
+  `insufficient_data_reason`, `analysis_warning`, `analysis_mode`,
+  `llm_rounds`, `rejected_model_candidates`. Status rules:
+  - only `pass`, `violation`, `insufficient_data`, `not_checked` are
+    valid; a model answer with any other / missing `status` is **never**
+    read as `pass` — it becomes `insufficient_data` with the reason
+    "модель вернула нераспознанный статус …";
+  - `insufficient_data_reason` is set **only** when `status` is
+    `insufficient_data` (no "violation + insufficient data" pairs);
+  - `analysis_warning` — the status stands on deterministic rules while
+    the model part is missing, failed or unrecognised (empty/non-JSON
+    answer after one retry, unknown status, model not used / deadline
+    hit): `violation` on rule-confirmed findings, or `pass` that is only
+    as complete as the rules.
+    Every non-null `analysis_warning` is also listed in `limitations`
+    and printed as a `::warning::` in the step log.
 
 ## JSON schema
 

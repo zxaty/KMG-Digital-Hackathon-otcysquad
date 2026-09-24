@@ -73,30 +73,6 @@ class MockLLMClient:
         return self.scripted_response
 
 
-class AnthropicClient:
-    """Anthropic Messages API через официальный SDK (не используется по
-    умолчанию — организатор допустил DeepSeek/Qwen, см. llm_client.py)."""
-
-    def __init__(self, model: str = "claude-sonnet-4-5", api_key: str | None = None, max_tokens: int = 8192):
-        import os
-        try:
-            import anthropic
-        except ImportError as exc:
-            raise RuntimeError("anthropic package is not installed. Run: pip install anthropic") from exc
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise RuntimeError("ANTHROPIC_API_KEY not set and no api_key passed")
-        self._client = anthropic.Anthropic(api_key=key)
-        self.model = model
-        self.max_tokens = max_tokens
-
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        response = self._client.messages.create(
-            model=self.model, max_tokens=self.max_tokens, system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        return "".join(block.text for block in response.content if block.type == "text")
-
 
 # ---------------------------------------------------------------------------
 # Evidence-bundle builders - one per requirement (structured part).
@@ -452,6 +428,11 @@ class AnalysisResult:
     checked_files: list[str] = field(default_factory=list)
     llm_rounds: int = 0
     analysis_mode: str = "llm"                              # llm | rules-only | deterministic
+    json_retry_used: bool = False                           # был ли повтор запроса из-за непригодного ответа
+    model_failure: str | None = None                        # модель так и не дала пригодного ответа
+    # проблема анализа моделью при статусе, установленном по подтверждённым находкам правил
+    # (вместо противоречивой пары status="violation" + insufficient_data_reason); → «Ограничения»
+    analysis_warning: str | None = None
 
 
 def extract_snippet(project_root: Path, file: str, line: int, context: int = 0) -> str | None:
@@ -617,7 +598,7 @@ def rules_only_result(requirement_id: str, project_root: Path, rule_findings: li
     return AnalysisResult(
         requirement_id=requirement_id, requirement_text=IB_REQUIREMENTS[requirement_id], status=status,
         summary=summary, violations=violations, analysis_mode="rules-only",
-        insufficient_data_reason=None if violations else (f"{reason}; отсутствие нарушений по правилам не гарантирует полноту проверки" if limitations else None),
+        analysis_warning=None if violations else (f"{reason}; отсутствие нарушений по правилам не гарантирует полноту проверки" if limitations else None),
     )
 
 
@@ -653,6 +634,8 @@ def analyze_requirement(
     parsed: dict | None = None
     rounds = 0
     note = None
+    json_retry_used = False
+    first_failure = None
     while rounds < max_rounds:
         rounds += 1
         user_prompt = build_user_prompt(requirement_id, requirement_text, evidence, rule_dicts, rounds, note)
@@ -660,14 +643,34 @@ def analyze_requirement(
         try:
             parsed = extract_json_object(raw)
         except json.JSONDecodeError as exc:
+            meta = raw.describe() if hasattr(raw, "describe") else f"символов ответа={len(str(raw).strip())}"
+            if not json_retry_used and (deadline is None or time.monotonic() < deadline):
+                # один повтор: пустой/обрезанный/не-JSON ответ — строгая инструкция, при обрезке по длине — меньше исходников
+                json_retry_used = True
+                first_failure = f"{exc} ({meta})"
+                if getattr(raw, "finish_reason", None) == "length" and include_sources:
+                    sent = sum(len(v["content"]) for v in (evidence.get("source_files") or {}).values())
+                    evidence = attach_sources(EVIDENCE_BUILDERS[requirement_id](index), index, project_root,
+                                              requirement_id, max(4000, min(source_budget_chars, sent) // 2))
+                    known_locations = collect_known_locations(evidence)
+                note = ("предыдущий ответ непригоден (" + meta + "). Не рассуждай вслух: верни ТОЛЬКО один JSON-объект "
+                        "по схеме из системной подсказки, без текста до или после него.")
+                rounds -= 1
+                continue
+            reason = (f"модель не дала пригодного ответа: {exc} ({meta})"
+                      + (f"; первый ответ тоже непригоден: {first_failure}" if first_failure else "")
+                      + " — требование оценено только детерминированными правилами")
             result = AnalysisResult(
                 requirement_id=requirement_id, requirement_text=requirement_text, status="insufficient_data", summary="",
-                insufficient_data_reason=f"ответ модели не является корректным JSON: {exc}",
-                raw_model_output=raw, parse_error=str(exc), llm_rounds=rounds,
+                insufficient_data_reason=reason, raw_model_output=str(raw), parse_error=str(exc), llm_rounds=rounds,
+                json_retry_used=json_retry_used, model_failure=reason,
             )
             result.violations = [rule_finding_to_violation(project_root, rf) for rf in rule_findings]
             if result.violations:
+                # нарушение подтверждено правилами; сбой модели — отдельное предупреждение, не «недостаточно данных»
                 result.status = "violation"
+                result.insufficient_data_reason = None
+                result.analysis_warning = reason
             return result
         need = parsed.get("need_files") if isinstance(parsed, dict) else None
         if need and isinstance(need, list) and rounds < max_rounds and include_sources and (deadline is None or time.monotonic() < deadline):
@@ -769,9 +772,19 @@ def analyze_requirement(
             "source": "llm", "requirement_context": requirement_id,
         })
 
+    known_status = claimed_status in ("pass", "violation", "insufficient_data")
+    unknown_note = (f"модель вернула нераспознанный статус {claimed_status!r} (допустимы только "
+                    f"\"pass\", \"violation\", \"insufficient_data\") — ответ не принят как «соответствует»")
+    analysis_warning = None
     if merged:
         final_status = "violation"
         insufficient_reason = None
+        if not known_status:
+            analysis_warning = unknown_note + "; статус «нарушено» установлен по подтверждённым находкам"
+    elif not known_status:
+        # никогда не превращать неизвестный/отсутствующий статус в тихое «соответствует»
+        final_status = "insufficient_data"
+        insufficient_reason = unknown_note
     elif claimed_status == "violation":
         final_status = "insufficient_data"
         insufficient_reason = (f"модель заявила нарушения по {requirement_id}, но ни одно не привязано к реальному месту в переданных данных ({len(rejected)} отклонено)"
@@ -779,7 +792,7 @@ def analyze_requirement(
     elif claimed_status == "insufficient_data":
         final_status = "insufficient_data"
         insufficient_reason = parsed.get("insufficient_data_reason") or "модель сообщила о недостатке данных без указания причины"
-    else:
+    else:  # claimed_status == "pass"
         final_status = "pass"
         insufficient_reason = None
 
@@ -787,4 +800,5 @@ def analyze_requirement(
         requirement_id=requirement_id, requirement_text=requirement_text, status=final_status, summary=summary,
         violations=merged, rejected=rejected, insufficient_data_reason=insufficient_reason, raw_model_output=raw,
         spec_gaps=spec_gaps, disputed=disputed, checked_files=checked_files, llm_rounds=rounds, analysis_mode="llm",
+        json_retry_used=json_retry_used, analysis_warning=analysis_warning,
     )

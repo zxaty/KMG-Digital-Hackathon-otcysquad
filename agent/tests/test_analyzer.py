@@ -26,6 +26,7 @@ sys.path.insert(0, str(AGENT_DIR))
 
 from indexer import Indexer  # noqa: E402
 import analyzer  # noqa: E402
+import rules  # noqa: E402
 
 
 class AnalyzerAgainstRealIndexTests(unittest.TestCase):
@@ -149,6 +150,45 @@ class AnalyzerAgainstRealIndexTests(unittest.TestCase):
         self.assertEqual(result.status, "insufficient_data")
         self.assertIsNotNone(result.insufficient_data_reason)
         self.assertIn("пуст", result.insufficient_data_reason)
+
+    # ---------- unrecognized / missing status must not become a silent "pass" ----------
+
+    def _scripted(self, **fields):
+        body = {"summary": "…", "violations": [], "insufficient_data_reason": None}
+        body.update(fields)
+        return analyzer.MockLLMClient(scripted_response=json.dumps(body))
+
+    def test_unrecognized_status_values_are_insufficient_data_not_pass(self):
+        cases = {"banana": {"status": "banana"}, "None": {"status": None}, "wrong case": {"status": "Violation"}}
+        for label, fields in cases.items():
+            with self.subTest(label):
+                result = analyzer.analyze_requirement("IB-07", self.index, self._scripted(**fields), PROJECT_ROOT)
+                self.assertEqual(result.status, "insufficient_data")
+                self.assertIn("нераспознанный статус", result.insufficient_data_reason)
+                self.assertIn(repr(fields["status"]), result.insufficient_data_reason)
+                self.assertIsNone(result.analysis_warning)
+
+    def test_missing_status_key_is_insufficient_data_not_pass(self):
+        client = analyzer.MockLLMClient(scripted_response=json.dumps({"summary": "no status key", "violations": []}))
+        result = analyzer.analyze_requirement("IB-07", self.index, client, PROJECT_ROOT)
+        self.assertEqual(result.status, "insufficient_data")
+        self.assertIn("нераспознанный статус None", result.insufficient_data_reason)
+
+    def test_unrecognized_status_with_rule_findings_keeps_violation_and_warns(self):
+        findings = [f for f in rules.run_rules(self.index, PROJECT_ROOT).findings if f.requirement_id == "IB-04"]
+        self.assertTrue(findings)
+        result = analyzer.analyze_requirement("IB-04", self.index, self._scripted(status="banana"), PROJECT_ROOT,
+                                              rule_findings=findings)
+        self.assertEqual(result.status, "violation")
+        self.assertEqual(len(result.violations), len(findings))
+        self.assertIsNone(result.insufficient_data_reason)          # нет противоречивой пары violation + insufficient
+        self.assertIn("нераспознанный статус 'banana'", result.analysis_warning)
+
+    def test_explicit_pass_is_still_pass(self):
+        result = analyzer.analyze_requirement("IB-07", self.index, self._scripted(status="pass"), PROJECT_ROOT)
+        self.assertEqual(result.status, "pass")
+        self.assertIsNone(result.insufficient_data_reason)
+        self.assertIsNone(result.analysis_warning)
 
     # ---------- missing location is rejected ----------
 

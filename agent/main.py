@@ -89,7 +89,7 @@ def parse_args(argv=None):
     ap.add_argument("--index-out", default=None, help="сохранить статический индекс проекта (JSON) — для отладки")
     ap.add_argument("--commit", default=os.environ.get("IB_CHECK_COMMIT"),
                     help="идентификатор коммита для отчёта, если проект не является git-репозиторием (по умолчанию — git rev-parse HEAD)")
-    ap.add_argument("--provider", default=None, help="deepseek | qwen | openai | custom | mock | none (по умолчанию LLM_PROVIDER или deepseek)")
+    ap.add_argument("--provider", default=None, help="deepseek | qwen | mock | none (по умолчанию LLM_PROVIDER или deepseek; допустимы только DeepSeek и Qwen)")
     ap.add_argument("--model", default=None, help="имя модели (по умолчанию LLM_MODEL или пресет провайдера)")
     ap.add_argument("--base-url", default=None, help="базовый URL OpenAI-совместимого API")
     ap.add_argument("--deadline-minutes", type=float, default=25.0, help="внутренний лимит времени проверки (ТЗ 4.7.1: шаг ≤ 30 мин)")
@@ -214,6 +214,15 @@ def main(argv=None) -> int:
         gh_annotation("notice", "нарушений Требований ИБ не выявлено; пайплайн продолжается")
     if insufficient:
         gh_annotation("warning", "недостаточно данных для вывода по: " + ", ".join(requirements_ru.display_id(r) for r in insufficient))
+    model_failed = [rid for rid, r in run_result.requirement_results.items() if getattr(r, "model_failure", None)]
+    if model_failed:
+        gh_annotation("warning", "модель не дала пригодного ответа по: " + ", ".join(requirements_ru.display_id(r) for r in model_failed)
+                      + " — эти требования оценены только правилами (см. «Ограничения» отчёта)")
+    warned = [rid for rid, r in run_result.requirement_results.items()
+              if getattr(r, "analysis_warning", None) and rid not in model_failed]
+    if warned:
+        gh_annotation("warning", "ответ модели не распознан по: " + ", ".join(requirements_ru.display_id(r) for r in warned)
+                      + " — статус установлен по правилам (см. «Ограничения» отчёта)")
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
         try:

@@ -102,7 +102,16 @@ def run_all(
         progress(rid, "запрос к модели…")
         res = analyzer.analyze_requirement(rid, index, client, project_root, rule_findings=by_req.get(rid, []),
                                            source_budget_chars=source_budget_chars, deadline=deadline)
-        progress(rid, f"{res.status}: нарушений {len(res.violations)}, отклонено {len(res.rejected)}, раундов {res.llm_rounds}")
+        extra = ""
+        if res.model_failure:
+            extra = f"; ⚠ МОДЕЛЬ НЕ ДАЛА ПРИГОДНОГО ОТВЕТА — только правила ({res.model_failure})"
+        elif res.analysis_warning:
+            extra = f"; ⚠ {res.analysis_warning}"
+        elif res.status == "insufficient_data" and res.insufficient_data_reason:
+            extra = f"; ⚠ {res.insufficient_data_reason}"
+        elif res.json_retry_used:
+            extra = "; первый ответ модели непригоден, повтор успешен"
+        progress(rid, f"{res.status}: нарушений {len(res.violations)}, отклонено {len(res.rejected)}, раундов {res.llm_rounds}{extra}")
         return res
 
     if llm_queue:

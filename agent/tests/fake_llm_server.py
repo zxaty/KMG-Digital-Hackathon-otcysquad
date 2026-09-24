@@ -7,6 +7,10 @@
   reject_json_mode  — 400 при наличии response_format, иначе 200 (проверка отката json-режима);
   garbage           — 200 с не-JSON текстом;
   echo_prompt       — 200 с JSON, в котором summary содержит первые 200 символов промпта.
+
+responder(body) может вернуть строку (content) или dict с ключами content (в т.ч. None),
+reasoning_content, finish_reason, reasoning_tokens — так имитируется ответ модели в режиме
+рассуждений, исчерпавший max_tokens (content пуст, finish_reason="length").
 """
 from __future__ import annotations
 
@@ -53,11 +57,21 @@ class FakeLLMServer:
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.port}/v1"
 
-    def _ok(self, content: str, prompt_chars: int = 0) -> tuple[int, dict]:
+    def _ok(self, content, prompt_chars: int = 0) -> tuple[int, dict]:
+        spec = content if isinstance(content, dict) else {"content": content}
+        text = spec.get("content")
+        message = {"role": "assistant", "content": text}
+        if spec.get("reasoning_content") is not None:
+            message["reasoning_content"] = spec["reasoning_content"]
+        completion = spec.get("completion_tokens", max(1, len(text or "") // 4))
+        usage = {"prompt_tokens": max(1, prompt_chars // 4), "completion_tokens": completion,
+                 "total_tokens": max(1, prompt_chars // 4) + completion}
+        if spec.get("reasoning_tokens") is not None:
+            usage["completion_tokens_details"] = {"reasoning_tokens": spec["reasoning_tokens"]}
         return 200, {
             "id": "chatcmpl-fake", "object": "chat.completion", "model": "fake-model",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": max(1, prompt_chars // 4), "completion_tokens": max(1, len(content) // 4), "total_tokens": max(2, prompt_chars // 4 + len(content) // 4)},
+            "choices": [{"index": 0, "message": message, "finish_reason": spec.get("finish_reason", "stop")}],
+            "usage": usage,
         }
 
     def _respond(self, body: dict, n: int) -> tuple[int, dict]:

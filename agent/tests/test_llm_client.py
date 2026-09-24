@@ -25,7 +25,7 @@ NO_SLEEP = mock.patch("llm_client.time.sleep", lambda s: None)
 class OpenAICompatibleClientTests(unittest.TestCase):
     def test_success_returns_content_and_accounts_usage(self):
         with FakeLLMServer("ok", content='{"status":"pass"}') as srv:
-            c = llm_client.OpenAICompatibleClient(provider="custom", api_key="k", model="m", base_url=srv.base_url, max_retries=1)
+            c = llm_client.OpenAICompatibleClient(provider="deepseek", api_key="k", model="m", base_url=srv.base_url, max_retries=1)
             out = c.complete("system", "user prompt")
             self.assertEqual(out, '{"status":"pass"}')
             self.assertEqual(c.usage.calls, 1)
@@ -40,14 +40,14 @@ class OpenAICompatibleClientTests(unittest.TestCase):
 
     def test_retries_on_5xx_then_succeeds(self):
         with FakeLLMServer("flaky_then_ok", content="ok", fail_first=2) as srv, NO_SLEEP:
-            c = llm_client.OpenAICompatibleClient(provider="custom", api_key="k", model="m", base_url=srv.base_url, max_retries=3)
+            c = llm_client.OpenAICompatibleClient(provider="deepseek", api_key="k", model="m", base_url=srv.base_url, max_retries=3)
             self.assertEqual(c.complete("s", "u"), "ok")
             self.assertEqual(len(srv.requests), 3)
             self.assertEqual(c.usage.retries, 2)
 
     def test_unavailable_after_retries_raises(self):
         with FakeLLMServer("always_429") as srv, NO_SLEEP:
-            c = llm_client.OpenAICompatibleClient(provider="custom", api_key="k", model="m", base_url=srv.base_url, max_retries=2)
+            c = llm_client.OpenAICompatibleClient(provider="deepseek", api_key="k", model="m", base_url=srv.base_url, max_retries=2)
             with self.assertRaises(llm_client.LLMUnavailableError) as ctx:
                 c.complete("s", "u")
             self.assertIn("429", str(ctx.exception))
@@ -55,7 +55,7 @@ class OpenAICompatibleClientTests(unittest.TestCase):
 
     def test_json_mode_fallback_on_400(self):
         with FakeLLMServer("reject_json_mode", content="plain") as srv, NO_SLEEP:
-            c = llm_client.OpenAICompatibleClient(provider="custom", api_key="k", model="m", base_url=srv.base_url, max_retries=1)
+            c = llm_client.OpenAICompatibleClient(provider="deepseek", api_key="k", model="m", base_url=srv.base_url, max_retries=1)
             self.assertEqual(c.complete("s", "u"), "plain")
             self.assertEqual(len(srv.requests), 2)
             self.assertIn("response_format", srv.requests[0]["body"])
@@ -66,7 +66,7 @@ class OpenAICompatibleClientTests(unittest.TestCase):
 
     def test_connection_refused_raises_unavailable(self):
         with NO_SLEEP:
-            c = llm_client.OpenAICompatibleClient(provider="custom", api_key="k", model="m", base_url="http://127.0.0.1:9/v1", max_retries=0, timeout=2)
+            c = llm_client.OpenAICompatibleClient(provider="deepseek", api_key="k", model="m", base_url="http://127.0.0.1:9/v1", max_retries=0, timeout=2)
             with self.assertRaises(llm_client.LLMUnavailableError):
                 c.complete("s", "u")
 
@@ -90,6 +90,13 @@ class OpenAICompatibleClientTests(unittest.TestCase):
             c = llm_client.OpenAICompatibleClient(provider="qwen")
             self.assertEqual(c.endpoint, "https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions")
             self.assertEqual(c.model, "qwen3-coder-plus")
+
+    def test_only_deepseek_and_qwen_are_accepted(self):
+        # организатор допускает только DeepSeek и Qwen — другие провайдеры отклоняются конфигурационной ошибкой (→ код 2)
+        self.assertEqual(set(llm_client.PROVIDERS), {"deepseek", "qwen"})
+        for provider in ("openai", "custom", "anthropic"):
+            with self.subTest(provider), self.assertRaises(llm_client.LLMConfigError):
+                llm_client.OpenAICompatibleClient(provider=provider, api_key="k", base_url="http://127.0.0.1:9/v1", model="m")
 
     def test_make_client_modes(self):
         self.assertIsNone(llm_client.make_client("none"))

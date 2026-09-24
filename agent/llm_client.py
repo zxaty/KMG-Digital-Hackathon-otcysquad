@@ -6,14 +6,20 @@
 которую CLI превращает в код завершения 2 без формирования отчёта.
 
 Переменные окружения (все можно переопределить аргументами CLI):
-  LLM_PROVIDER   deepseek | qwen | openai | custom | mock | none   (по умолчанию deepseek)
-  LLM_API_KEY    ключ (для deepseek также DEEPSEEK_API_KEY, для qwen — DASHSCOPE_API_KEY, для openai — OPENAI_API_KEY)
+  LLM_PROVIDER   deepseek | qwen | mock | none   (по умолчанию deepseek; организатор допускает только DeepSeek и Qwen)
+  LLM_API_KEY    ключ (для deepseek также DEEPSEEK_API_KEY, для qwen — DASHSCOPE_API_KEY)
   LLM_MODEL      имя модели (по умолчанию из PROVIDERS)
   LLM_BASE_URL   базовый URL API (…/v1 или без него; путь /chat/completions добавляется сам);
                  для qwen обязателен: https://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
   LLM_TIMEOUT    таймаут одного запроса, с (по умолчанию 300)
   LLM_MAX_TOKENS максимум токенов ответа (по умолчанию 8192)
   LLM_JSON_MODE  auto | on | off — просить response_format=json_object (auto: попробовать, при 400 — без него)
+  LLM_THINKING   disabled | enabled | omit — режим рассуждений DeepSeek (по умолчанию disabled: в режиме
+                 рассуждений они расходуют тот же max_tokens, а temperature игнорируется; omit — не передавать)
+
+Каждый ответ возвращается как LLMText (подкласс str) с полями finish_reason,
+reasoning_tokens, completion_tokens — чтобы вызывающий код мог понять, почему
+ответ пуст или обрезан; эти же поля пишутся в usage.per_call и в журнал.
 """
 from __future__ import annotations
 
@@ -29,15 +35,36 @@ import urllib.request
 from dataclasses import dataclass, field
 
 PROVIDERS: dict[str, dict] = {
-    "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-v4-pro", "key_env": ("LLM_API_KEY", "DEEPSEEK_API_KEY")},
+    "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-v4-pro", "key_env": ("LLM_API_KEY", "DEEPSEEK_API_KEY"),
+                 "thinking": "disabled"},
     # адрес Qwen зависит от рабочего пространства Model Studio — задаётся явно через LLM_BASE_URL:
     # https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1 (Сингапур) или …cn-beijing… (Пекин)
     "qwen": {"base_url": "", "model": "qwen-plus", "key_env": ("LLM_API_KEY", "DASHSCOPE_API_KEY", "QWEN_API_KEY")},
-    "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-5", "key_env": ("LLM_API_KEY", "OPENAI_API_KEY")},
-    "custom": {"base_url": "", "model": "", "key_env": ("LLM_API_KEY",)},
 }
 
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+class LLMText(str):
+    """Текст ответа модели + метаданные ответа API (finish_reason и расход токенов)."""
+    finish_reason: str | None = None
+    reasoning_tokens: int | None = None
+    completion_tokens: int | None = None
+
+    @classmethod
+    def build(cls, text: str, finish_reason=None, reasoning_tokens=None, completion_tokens=None) -> "LLMText":
+        obj = cls(text)
+        obj.finish_reason, obj.reasoning_tokens, obj.completion_tokens = finish_reason, reasoning_tokens, completion_tokens
+        return obj
+
+    def describe(self) -> str:
+        parts = [f"finish_reason={self.finish_reason}"]
+        if self.completion_tokens is not None:
+            parts.append(f"completion_tokens={self.completion_tokens}")
+        if self.reasoning_tokens is not None:
+            parts.append(f"reasoning_tokens={self.reasoning_tokens}")
+        parts.append(f"символов ответа={len(self.strip())}")
+        return ", ".join(parts)
 
 
 class LLMUnavailableError(RuntimeError):
@@ -62,6 +89,7 @@ class Usage:
         return {
             "calls": self.calls, "prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens, "retries": self.retries, "wall_seconds": round(self.wall_seconds, 1),
+            "per_call": list(self.per_call),
         }
 
 
@@ -95,6 +123,9 @@ class OpenAICompatibleClient:
         self.timeout = float(timeout or os.environ.get("LLM_TIMEOUT") or 300)
         self.max_tokens = int(max_tokens or os.environ.get("LLM_MAX_TOKENS") or 8192)
         self.json_mode = (json_mode or os.environ.get("LLM_JSON_MODE") or "auto").lower()
+        self.thinking = (os.environ.get("LLM_THINKING") or preset.get("thinking") or "omit").lower()
+        if self.thinking not in ("enabled", "disabled", "omit"):
+            raise LLMConfigError(f"LLM_THINKING должен быть enabled, disabled или omit, а не {self.thinking!r}")
         self.max_retries = max_retries
         self.temperature = temperature
         self.usage = Usage()
@@ -120,6 +151,8 @@ class OpenAICompatibleClient:
         }
         if with_json_mode:
             payload["response_format"] = {"type": "json_object"}
+        if self.thinking != "omit":
+            payload["thinking"] = {"type": self.thinking}
         return payload
 
     def _post(self, payload: dict) -> tuple[int, dict | str]:
@@ -164,13 +197,19 @@ class OpenAICompatibleClient:
                     last_error = f"неожиданная структура ответа API: {exc}"
                     content = None
                 if content is not None:
-                    self._account(body, started, attempt)
-                    return content
+                    text = self._account(body, started, attempt, content, choice.get("finish_reason"))
+                    return text
             elif status == 400 and with_json and self.json_mode == "auto" and _mentions_response_format(body):
                 # провайдер не поддерживает response_format — повторяем без него, попытка не считается
                 with_json = False
                 self._json_mode_supported = False
                 self._log("LLM: провайдер не принял response_format=json_object, повтор без него")
+                attempt -= 1
+                continue
+            elif status == 400 and self.thinking != "omit" and "thinking" in _short_error(body).lower():
+                # провайдер не принял параметр thinking — повторяем без него, попытка не считается
+                self._log(f"LLM: провайдер не принял thinking={self.thinking}, повтор без параметра")
+                self.thinking = "omit"
                 attempt -= 1
                 continue
             elif status is not None:
@@ -185,8 +224,10 @@ class OpenAICompatibleClient:
             self._log(f"LLM: {last_error}; повтор через {delay:.0f} с (попытка {attempt}/{self.max_retries})")
             time.sleep(delay)
 
-    def _account(self, body: dict, started: float, attempt: int):
+    def _account(self, body: dict, started: float, attempt: int, content: str, finish_reason) -> LLMText:
         usage = body.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        reasoning = details.get("reasoning_tokens")
         pt = int(usage.get("prompt_tokens") or 0)
         ct = int(usage.get("completion_tokens") or 0)
         tt = int(usage.get("total_tokens") or (pt + ct))
@@ -197,7 +238,13 @@ class OpenAICompatibleClient:
             self.usage.completion_tokens += ct
             self.usage.total_tokens += tt
             self.usage.wall_seconds += elapsed
-            self.usage.per_call.append({"prompt_tokens": pt, "completion_tokens": ct, "seconds": round(elapsed, 1), "attempts": attempt})
+            self.usage.per_call.append({"prompt_tokens": pt, "completion_tokens": ct, "reasoning_tokens": reasoning,
+                                        "finish_reason": finish_reason, "content_chars": len(content.strip()),
+                                        "seconds": round(elapsed, 1), "attempts": attempt})
+        text = LLMText.build(content, finish_reason, reasoning, ct)
+        if finish_reason != "stop" or not content.strip():
+            self._log(f"LLM: нештатный ответ модели — {text.describe()}")
+        return text
 
 
 def _mentions_response_format(body) -> bool:
