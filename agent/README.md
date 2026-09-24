@@ -144,7 +144,7 @@ python3 -m unittest discover -s agent/tests -v
 |---|---|
 | 1.1 исходный код, промпты/навыки, конфигурация пайплайна, README | `agent/`, `agent/prompts/`, `agent/skills/`, `.github/workflows/`, этот файл |
 | 1.2 отчёт JSON + Markdown | `agent/reports/run-36042637087/report.json`, `report.md` (копия артефакта `ib-security-report-4459ed1…` прогона 36042637087) |
-| 1.3 журнал шага | `agent/reports/run-36042637087/agent-step.log`; полный журнал — на странице прогона 36042637087 |
+| 1.3 журнал шага | `agent/reports/run-36042637087/agent-step.log`; скриншот страницы прогона — `agent/reports/run-36042637087/actions-run-36042637087.png` (код 1, 25 нарушений, нарушенные требования, артефакт); полный журнал — на странице прогона 36042637087 |
 | 1.4 описание подхода | `agent/docs/Подход.md` |
 | 1.5 ресурсы | `agent/docs/Ресурсы.md` (32 с, 112 950 токенов), раздел «resources» отчёта |
 | 1.6 идентификатор коммита | `4459ed1ca364f208c4bddc5e52a639b6b56dbf09` — см. раздел «Коммит для сдачи» выше |
