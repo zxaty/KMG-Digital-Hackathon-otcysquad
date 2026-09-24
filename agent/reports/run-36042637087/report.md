@@ -1,0 +1,535 @@
+# Отчёт агента проверки требований ИБ
+
+**Коммит:** `4459ed1ca364f208c4bddc5e52a639b6b56dbf09` (ветка `main`)
+**Начало:** 2026-09-24T23:38:35+05:00 · **Окончание:** 2026-09-24T23:39:08+05:00 · **Длительность:** 32 с
+**Агент:** otcysquad IB-check agent v1.0.1 · **Модель:** deepseek/deepseek-v4-pro · **Режим:** rules+llm
+**Проект:** файлов в инвентаре — 456 (анализируется проект целиком, а не только изменённые в коммите файлы)
+
+## Результат: ❌ FAIL (код завершения 1) — нарушений Требований ИБ: **25**
+Нарушены требования: **ИБ-01, ИБ-02, ИБ-03, ИБ-04, ИБ-05, ИБ-07, ИБ-08**
+По критичности: критический 3 · высокий 19 · средний 3 · низкий 0
+
+## Статус по каждому требованию
+
+| Требование | Название | Статус | Нарушений | Способ проверки |
+|---|---|---|---|---|
+| ИБ-01 | Разграничение доступа к административному функционалу | ❌ нарушение | 4 | llm |
+| ИБ-02 | Проверка сессии и токена на стороне сервера | ❌ нарушение | 2 | llm |
+| ИБ-03 | Защита канала передачи данных | ❌ нарушение | 6 | llm |
+| ИБ-04 | Криптографическая защита персональных данных при хранении | ❌ нарушение | 1 | llm |
+| ИБ-05 | Защита локальных журналов приложения | ❌ нарушение | 2 | llm |
+| ИБ-06 | Ссылки на нормативную базу в документации проекта | ✅ соответствует | 0 | deterministic |
+| ИБ-07 | Журналирование действий пользователей и событий СУБД (сквозное требование) | ❌ нарушение | 9 | llm |
+| ИБ-08 | Контроль выгрузки персональных данных | ❌ нарушение | 1 | llm |
+
+### Что именно проверено
+
+- **ИБ-01** — Проверены все маршруты проекта и серверные проверки доступа. Обнаружены административные маршруты, защищённые только аутентификацией или техническим признаком is_staff, а не ролью 'administrator', что нарушает требование ИБ-01.
+  - проверено маршрутов: 22, из них административных по назначению: 5
+  - файлы, проанализированные моделью: `demodesk/config/urls.py`, `portal/access.py`, `portal/views.py`, `portal/middleware.py`, `portal/templates/portal/base.html`, `portal/templates/portal/manage.html`
+- **ИБ-02** — Проверка сессии и токена на стороне сервера реализована не полностью: большинство маршрутов защищены login_required, но API-маршруты api/v1/tickets/ и api/catalog/tickets/ не имеют серверной проверки сессии или токена; функция token_user не проверяет срок действия токена (exp).
+  - проверено маршрутов на наличие серверной проверки сессии/токена: 22
+  - файлы, проанализированные моделью: `demodesk/config/settings.py`, `demodesk/config/urls.py`, `portal/views.py`, `portal/access.py`, `portal/middleware.py`
+- **ИБ-03** — Проверены настройки Django (settings.py), конфигурация транспортного модуля (proxy.json) и код запуска (serve.py). Обнаружены нарушения: отключено принудительное перенаправление на HTTPS, cookie без флага Secure, HSTS не настроен, в списке шифронаборов присутствует слабый AES128-SHA. Версия TLS задана как TLSv1_2, что соответствует требованию.
+  - флаги SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE, SECURE_SSL_REDIRECT, SECURE_HSTS_SECONDS в settings
+  - конфигурация транспортного модуля proxy.json: версия TLS, шифронаборы, перенаправление HTTP
+  - файлы, проанализированные моделью: `demodesk/config/settings.py`, `proxy.json`, `serve.py`, `demodesk/config/urls.py`, `demodesk/config/wsgi.py`
+- **ИБ-04** — Пароли хешируются Argon2 с явными параметрами стоимости, что соответствует требованию. Однако персональные данные (ФИО, логин, email) в модели User хранятся в открытом виде без шифрования на уровне полей или СУБД, что нарушает ТС 4.5.3.
+  - основной хешер паролей portal.hashers.PasswordHasher: PasswordHasher наследует Argon2PasswordHasher
+  - модель пользователя portal.User: поля ПД ['username', 'first_name', 'last_name', 'middle_name', 'email']
+  - файлы, проанализированные моделью: `demodesk/config/settings.py`, `portal/models.py`, `portal/hashers.py`, `portal/storage.py`, `portal/management/commands/seed_demo.py`, `portal/management/commands/seed_workload.py`, `setup_local.py`
+- **ИБ-05** — Локальные журналы шифруются AES-GCM с уникальным nonce и записываются атомарно, однако ключ журнала хранится в каталоге, доступном на чтение непривилегированным пользователям, а каталог неотправленных записей доступен на изменение, что позволяет подделывать или удалять записи до отправки.
+  - функции записи журнала: [('portal/audit.py', 8)]
+  - настройка прав доступа к рабочему каталогу: 5 вызовов set_reader_access
+  - файлы, проанализированные моделью: `portal/audit.py`, `portal/local_acl.py`, `demodesk/config/settings.py`, `collector.py`, `setup_local.py`
+- **ИБ-06** — Все 6 требуемых ссылок на нормативные акты найдены в README.md, docs/Состав_сдаваемых_материалов.txt. Документы docx: docs/ТЗ_Хакатон.docx — все 6 ссылок присутствуют; docs/Техническая_спецификация_ИС_обработки_обращений_КМГ.docx — все 6 ссылок присутствуют.
+  - README/текстовые документы: README.md, docs/Состав_сдаваемых_материалов.txt
+  - docs/ТЗ_Хакатон.docx: 157 абзацев, гиперссылок: 0
+  - docs/Техническая_спецификация_ИС_обработки_обращений_КМГ.docx: 265 абзацев, гиперссылок: 0
+  - файлы, проанализированные агентом: `README.md`, `docs/Состав_сдаваемых_материалов.txt`, `docs/ТЗ_Хакатон.docx`, `docs/Техническая_спецификация_ИС_обработки_обращений_КМГ.docx`
+- **ИБ-07** — Журналирование реализовано частично: сигналы ORM покрывают изменения моделей helpdesk/portal, события входа/выхода, но отсутствует регистрация операций чтения, пакетных обновлений, отказов в доступе и событий СУБД. Требование сквозного журналирования не выполнено.
+  - сигналы аудита: ['m2m_changed', 'post_delete', 'post_save', 'user_logged_in', 'user_logged_out', 'user_login_failed']; функции записи журнала: ['portal.audit.record']; журналирующий middleware: нет
+  - признаки журнала событий СУБД: не найдены; логгер django.db с обработчиком: нет
+  - файлы, проанализированные моделью: `portal/audit.py`, `portal/apps.py`, `portal/middleware.py`, `portal/views.py`, `demodesk/config/settings.py`, `demodesk/config/urls.py`, `portal/access.py`, `portal/management/commands/db_access.py`, `collector.py`
+- **ИБ-08** — Проверены маршруты выгрузки персональных данных exports/people.csv и exports/people.json. CSV защищён ролью администратора и пишет аудит, JSON доступен любому аутентифицированному пользователю без проверки роли и без записи в журнал аудита.
+  - маршрутов выгрузки/скачивания данных: 2 (exports/people.csv, exports/people.json)
+  - файлы, проанализированные моделью: `portal/views.py`, `portal/access.py`, `portal/audit.py`, `demodesk/config/urls.py`
+
+## Нарушения Требований ИБ
+
+### ИБ-01. Разграничение доступа к административному функционалу
+
+> Доступ к административному интерфейсу должен предоставляться исключительно пользователям с ролью «администратор». Проверка роли должна выполняться на стороне сервера при каждом обращении. Сокрытие элементов административного интерфейса на стороне клиента не является выполнением настоящего требования.
+
+#### ИБ-01-213af066 — ВЫСОКИЙ · подтверждено · источник: rule:ib01.admin_guard_checks_technical_flag
+
+**Где:** `portal/access.py`, строка 18, `manage_required`
+**Также:** `portal/views.py`:102 (manage); `portal/views.py`:115 (change_role); `portal/views.py`:127 (grant_queue); `portal/views.py`:135 (reset_password)
+
+```python
+def manage_required(view):
+    @login_required
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if not request.user.is_staff: raise PermissionDenied
+        return view(request, *args, **kwargs)
+    return wrapped
+```
+
+**Обоснование:** Защитный механизм `manage_required` ограничивает административные маршруты (manage/, manage/users/<int:user_id>/role/, manage/users/<int:user_id>/queue/, manage/users/<int:user_id>/password/) по техническому признаку учётной записи (is_staff/is_superuser), а не по роли «администратор». Признак is_staff в проекте присваивается и операторам (см. создание/смену роли пользователя), поэтому оператор получает доступ к административному интерфейсу: видит справочник всех пользователей с ПД, может менять роли (в т.ч. назначить себя администратором), выдавать права на очереди и сбрасывать чужие пароли. ТС 4.3.2 прямо запрещает предоставлять административные полномочия по техническим признакам платформы.
+**Комментарий модели:** Подтверждаю: manage_required проверяет is_staff, а не роль 'administrator'. В коде manage() и change_role() is_staff присваивается операторам (user.is_staff = user.role != 'applicant'), что даёт операторам доступ к административным функциям.
+**Рекомендация:** Заменить проверку is_staff на проверку роли: использовать тот же механизм, что и в admin_required (role == 'administrator'), для всех административных маршрутов, включая API управления очередями.
+**Основание:** ТЗ 4.5.1, ТС 4.3.2, ТС 1.11
+
+#### ИБ-01-e598f54d — ВЫСОКИЙ · подтверждено · источник: llm
+
+**Где:** `portal/views.py`, строка 163, `export_json`
+
+```python
+@login_required
+@require_GET
+def export_json(request):
+    rows = people_rows()
+    response = JsonResponse({'people':rows,'generated_at':int(time.time())})
+    response['Content-Disposition'] = 'attachment; filename="people.json"'
+    response['Cache-Control'] = 'no-store'
+    return response
+```
+
+**Обоснование:** Маршрут exports/people.json (export_json) выгружает справочник пользователей с персональными данными, но защищён только login_required. В отличие от CSV-экспорта, здесь отсутствует проверка роли администратора, что позволяет любому аутентифицированному пользователю получить список всех пользователей.
+**Рекомендация:** Добавить декоратор admin_required к представлению export_json.
+
+#### ИБ-01-4f744fec — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/views.py`, строка 209, `queue_api`
+
+```python
+@login_required
+@require_POST
+def queue_api(request, queue_id):
+    queue = get_object_or_404(Queue,pk=queue_id)
+    try:
+        data = json.loads(request.body)
+        title = str(data['title']).strip()
+        if not title or len(title)>100: raise ValueError
+    except (ValueError, KeyError): return JsonResponse({'error':'invalid title'},status=400)
+    queue.title = title
+    queue.save()
+    return JsonResponse({'id':queue.pk,'title':queue.title})
+```
+
+**Обоснование:** Маршрут `api/manage/queues/<int:queue_id>/` (queue_api) относится к административным функциям (управление пользователями/ролями/очередями/настройками), но доступен только с проверкой аутентификации (login_required/токен) — роль «администратор» на сервере не проверяется. Декораторы/обёртки: login_required, require_POST.
+**Комментарий модели:** Подтверждаю: queue_api не имеет проверки роли администратора. Маршрут api/manage/queues/<int:queue_id>/ (queue_api) выполняет административную операцию изменения названия очереди, но защищён только декораторами login_required и require_POST. Проверка роли 'administrator' отсутствует, что позволяет любому аутентифицированному пользователю изменять очереди.
+**Рекомендация:** Применить к представлению серверную проверку роли администратора (единый декоратор, проверяющий request.user.role == 'administrator' на каждом запросе) до чтения и изменения данных.
+**Основание:** ТЗ 4.5.1, ТС 4.3.2, ТС 4.3.3
+
+#### ИБ-01-1f765a67 — СРЕДНИЙ · вероятно · источник: llm
+
+**Где:** `portal/views.py`, строка 202, `catalog_api`
+
+```python
+@require_GET
+def catalog_api(request):
+    rows = list(Ticket.objects.all())
+
+    return JsonResponse({'tickets':[serialize_ticket(t) for t in rows]})
+```
+
+**Обоснование:** Маршрут api/catalog/tickets/ (catalog_api) возвращает все обращения без проверки аутентификации и роли. Хотя это не прямое управление пользователями, он раскрывает данные всех обращений, что может быть частью административного функционала. Требуется проверка роли администратора или ограничение доступа.
+**Рекомендация:** Добавить проверку аутентификации и роли администратора или ограничить доступ в соответствии с матрицей прав.
+
+### ИБ-02. Проверка сессии и токена на стороне сервера
+
+> Валидность сессии и (или) токена должна проверяться на стороне сервера при каждом обращении к защищённым конечным точкам, включая программные интерфейсы (API).
+
+#### ИБ-02-edc0169f — КРИТИЧЕСКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/views.py`, строка 202, `catalog_api`
+
+```python
+@require_GET
+def catalog_api(request):
+    rows = list(Ticket.objects.all())
+
+    return JsonResponse({'tickets':[serialize_ticket(t) for t in rows]})
+```
+
+**Обоснование:** Конечная точка `api/catalog/tickets/` (catalog_api) не защищена ни проверкой сессии (login_required/middleware), ни проверкой токена: в urls.py нет обёртки, у представления нет декоратора аутентификации, в теле нет проверки заголовка Authorization. Представление возвращает данные с персональными сведениями (email) любому анонимному клиенту.
+**Комментарий модели:** Подтверждаю: catalog_api не имеет аутентификации и возвращает персональные данные. Конечная точка api/catalog/tickets/ (catalog_api) не защищена ни проверкой сессии (login_required/middleware), ни проверкой токена: в urls.py нет обёртки, у представления нет декоратора аутентификации, в теле нет проверки заголовка Authorization. Представление возвращает данные с персональными сведениями (email) любому анонимному клиенту.
+**Рекомендация:** Добавить серверную проверку сессии или токена (единый механизм, как у остальных защищённых маршрутов) и ограничить выборку областью данных пользователя.
+**Основание:** ТЗ 4.5.2, ТС 4.4.1, ТС 4.4.3, ТС 4.3.9
+
+#### ИБ-02-fdff5975 — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/views.py`, строка 178, `token_user`
+
+```python
+    data = signing.loads(header[7:],salt='support-api')
+```
+
+**Обоснование:** Функция `token_user` проверяет только подпись токена (signing.loads без max_age) и не сравнивает поле exp с текущим временем: истёкший токен принимается как действительный, т.е. валидность токена на сервере проверяется не полностью (ТС 4.4.3: отклонять истёкшие сессии/токены).
+**Комментарий модели:** Подтверждаю: token_user не проверяет срок действия токена. Функция token_user проверяет только подпись токена (signing.loads без max_age) и не сравнивает поле exp с текущим временем: истёкший токен принимается как действительный, т.е. валидность токена на сервере проверяется не полностью (ТС 4.4.3: отклонять истёкшие сессии/токены).
+**Рекомендация:** Передавать max_age в signing.loads либо явно проверять data['exp'] > time.time(); при выходе из системы, смене пароля или роли — отзывать выданные токены.
+**Основание:** ТЗ 4.5.2, ТС 4.4.3, ТС 4.4.7
+
+### ИБ-03. Защита канала передачи данных
+
+> Обмен данными между клиентом и сервером должен осуществляться исключительно по протоколу TLS версии не ниже 1.2 с применением стойких шифронаборов. Наличие конфигураций, допускающих передачу данных в незащищённом виде либо использование устаревших версий протокола и слабых шифронаборов, является нарушением.
+
+#### ИБ-03-46777308 — КРИТИЧЕСКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `proxy.json`, строка 7, `http_redirect`
+
+```
+  "http_redirect": false
+```
+
+**Обоснование:** proxy.json: "http_redirect": false — транспортный модуль принимает запросы на HTTP-порту 8086 и проксирует их в приложение как есть, вместо перенаправления на HTTPS. Данные (включая учётные данные и cookie сессии) могут передаваться открытым текстом.
+**Комментарий модели:** Подтверждено: http_redirect = false в proxy.json, строка 7. В proxy.json параметр http_redirect установлен в false. Транспортный модуль принимает HTTP-запросы на порту 8086 и проксирует их в приложение без перенаправления на HTTPS. Это допускает передачу данных (включая учётные данные и cookie сессии) в незащищённом виде, что нарушает ТЗ 4.5.3 и ТС 4.8.2. В списке шифронаборов присутствует AES128-SHA, который использует RSA-обмен ключами без эфемерности (ECDHE), режим CBC без AEAD и HMAC-SHA1. ТС 4.8.1 допускает для TLS 1.2 только наборы с ECDHE и AEAD. Это нарушает требование к стойким шифронаборам.
+**Рекомендация:** Установить "http_redirect": true (ответ 308 на HTTPS-порт) либо не открывать HTTP-слушатель вовсе.
+**Основание:** ТЗ 4.5.3, ТС 4.8.2
+
+#### ИБ-03-e83d9a7e — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `demodesk/config/settings.py`, строка 24, `SESSION_COOKIE_SECURE`
+
+```python
+SESSION_COOKIE_SECURE = False
+```
+
+**Обоснование:** SESSION_COOKIE_SECURE = False: сессионная cookie может передаваться по незащищённому HTTP (нет флага Secure). Конфигурация допускает передачу данных в незащищённом виде (ТС 4.8.2).
+**Комментарий модели:** Подтверждено: SESSION_COOKIE_SECURE = False в settings.py, строка 24. SESSION_COOKIE_SECURE = False: сессионная cookie может передаваться по незащищённому HTTP, так как флаг Secure не установлен. Это нарушает ТС 4.8.2. CSRF_COOKIE_SECURE = False: CSRF-cookie может передаваться по незащищённому HTTP, так как флаг Secure не установлен. Это нарушает ТС 4.8.2. SECURE_SSL_REDIRECT = False: приложение не принуждает к защищённому соединению, запросы по HTTP обслуживаются без перенаправления на HTTPS. Это нарушает ТС 4.8.2.
+**Рекомендация:** Установить SESSION_COOKIE_SECURE = True.
+**Основание:** ТЗ 4.5.3, ТС 4.8.2
+
+#### ИБ-03-63022943 — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `demodesk/config/settings.py`, строка 25, `CSRF_COOKIE_SECURE`
+
+```python
+CSRF_COOKIE_SECURE = False
+```
+
+**Обоснование:** CSRF_COOKIE_SECURE = False: CSRF-cookie может передаваться по незащищённому HTTP (нет флага Secure). Конфигурация допускает передачу данных в незащищённом виде (ТС 4.8.2).
+**Комментарий модели:** Подтверждено: CSRF_COOKIE_SECURE = False в settings.py, строка 25. SECURE_HSTS_SECONDS = 0: политика HSTS не объявляется, браузер может обратиться по HTTP. Это нарушает ТС 4.8.2.
+**Рекомендация:** Установить CSRF_COOKIE_SECURE = True.
+**Основание:** ТЗ 4.5.3, ТС 4.8.2
+
+#### ИБ-03-7cc8ce45 — ВЫСОКИЙ · подтверждено · источник: rule:ib03.secure_ssl_redirect
+
+**Где:** `demodesk/config/settings.py`, строка 26, `SECURE_SSL_REDIRECT`
+
+```python
+SECURE_SSL_REDIRECT = False
+```
+
+**Обоснование:** SECURE_SSL_REDIRECT = False: приложение не принуждает к защищённому соединению: запросы по HTTP обслуживаются без перенаправления на HTTPS. Конфигурация допускает передачу данных в незащищённом виде (ТС 4.8.2).
+**Комментарий модели:** Подтверждено: SECURE_SSL_REDIRECT = False в settings.py, строка 26.
+**Рекомендация:** Установить SECURE_SSL_REDIRECT = True (и перенаправление на уровне транспортного модуля).
+**Основание:** ТЗ 4.5.3, ТС 4.8.2
+
+#### ИБ-03-684bf913 — ВЫСОКИЙ · подтверждено · источник: rule:ib03.weak_cipher_suites
+
+**Где:** `proxy.json`, строка 6, `ciphers`
+
+```
+  "ciphers": "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES128-SHA",
+```
+
+**Обоснование:** proxy.json: в списке шифронаборов присутствуют слабые: AES128-SHA (обмен ключами RSA без эфемерности (ECDHE); режим CBC/без AEAD; HMAC-SHA1). ТС 4.8.1 допускает для TLS 1.2 только наборы с ECDHE и AEAD; наборы с обменом ключами RSA, режимом CBC и HMAC-SHA1 запрещены.
+**Комментарий модели:** Подтверждено: в списке ciphers присутствует AES128-SHA в proxy.json, строка 6.
+**Рекомендация:** Оставить только ECDHE+AEAD, например: ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-CHACHA20-POLY1305.
+**Основание:** ТЗ 4.5.3, ТС 4.8.1
+
+#### ИБ-03-4d5e28be — СРЕДНИЙ · подтверждено · источник: rule:ib03.hsts_disabled
+
+**Где:** `demodesk/config/settings.py`, строка 28, `SECURE_HSTS_SECONDS`
+
+```python
+SECURE_HSTS_SECONDS = 0
+```
+
+**Обоснование:** SECURE_HSTS_SECONDS = 0: политика принудительного использования защищённого соединения (HSTS) не объявляется, браузер может обратиться по HTTP (ТС 4.8.2).
+**Комментарий модели:** Подтверждено: SECURE_HSTS_SECONDS = 0 в settings.py, строка 28.
+**Рекомендация:** Установить SECURE_HSTS_SECONDS (например, 31536000) и SECURE_HSTS_INCLUDE_SUBDOMAINS = True.
+**Основание:** ТЗ 4.5.3, ТС 4.8.2
+
+### ИБ-04. Криптографическая защита персональных данных при хранении
+
+> Персональные данные (фамилия, имя, отчество, логин, адрес электронной почты, пароль) должны храниться с применением криптографической защиты с параметрами не ниже уровня, установленного СТ РК 1073-2007. Пароли должны храниться в виде значений функций формирования ключа bcrypt, argon2 или scrypt. Хранение паролей в открытом виде, а равно с применением быстрых хеш-функций общего назначения без адаптивного алгоритма, является нарушением.
+
+#### ИБ-04-767bedeb — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/models.py`, строка 5, `User`
+**Также:** `portal/models.py`:6 (username); `portal/models.py`:7 (first_name); `portal/models.py`:8 (last_name); `portal/models.py`:9 (middle_name); `portal/models.py`:10 (email)
+
+```python
+class User(AbstractUser):
+    username = CharField(max_length=150, unique=True)
+    first_name = CharField(max_length=150, blank=True)
+    last_name = CharField(max_length=150, blank=True)
+    middle_name = CharField(max_length=150, blank=True)
+    email = EmailField(blank=True)
+    role = models.CharField(max_length=20, choices=[('applicant','Заявитель'),('operator','Оператор'),('administrator','Администратор')], default='applicant')
+```
+
+**Обоснование:** Персональные данные в модели пользователя `User` хранятся в БД открытым текстом: username (CharField, стр. 6), first_name (CharField, стр. 7), last_name (CharField, стр. 8), middle_name (CharField, стр. 9), email (EmailField, стр. 10). Шифрование на уровне полей (аутентифицированное шифрование, ключ ≥ 256 бит — ТС 4.5.3) или шифрованная СУБД не обнаружены; криптографически защищены только пароль (хеш) и содержимое вложений (AEAD в модуле хранения).
+**Комментарий модели:** Подтверждаю: модель User хранит ПД в открытом виде, шифрование отсутствует. Поля username, first_name, last_name, middle_name, email объявлены как обычные CharField/EmailField без шифрования. В настройках БД используется SQLite без шифрования. Это означает хранение ПД в открытом виде, что нарушает ТС 4.5.3 (аутентифицированное шифрование с ключом ≥256 бит).
+**Рекомендация:** Хранить ФИО, логин и e-mail через поля с аутентифицированным шифрованием (AES-256-GCM с ключом из runtime/keys, отдельным от данных); для поиска по логину/e-mail использовать слепой индекс (HMAC).
+**Основание:** ТЗ 4.5.4, ТС 4.5.1, ТС 4.5.3
+
+### ИБ-05. Защита локальных журналов приложения
+
+> Локальные журналы приложения должны храниться в зашифрованном виде и быть защищены от модификации пользователем до момента их отправки на сервер.
+
+#### ИБ-05-8d724e74 — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/local_acl.py`, строка 31, `configure`
+
+```python
+    set_reader_access(runtime/'journal','read')
+```
+
+**Обоснование:** Каталог журнала (runtime/'journal'), в котором хранится ключ шифрования журнала (LOG_KEY_FILE = RUNTIME / 'journal' / 'journal.key'), доступен на чтение непривилегированным локальным субъектам: зная ключ, пользователь может расшифровать, подделать и заново зашифровать записи — шифрование не защищает журнал от модификации.
+**Комментарий модели:** Подтверждаю: ключ журнала хранится в каталоге journal, доступном на чтение непривилегированным субъектам. Каталог журнала (runtime/'journal'), в котором хранится ключ шифрования журнала (LOG_KEY_FILE = RUNTIME / 'journal' / 'journal.key'), получает право 'read' для непривилегированных локальных субъектов. Зная ключ, пользователь может расшифровать, изменить и заново зашифровать записи, что нарушает требование защиты от модификации (ТЗ 4.5.5, ТС 4.6.7). Каталог неотправленных записей журнала (runtime/'journal'/'pending') получает право 'modify' для непривилегированных локальных субъектов. Это позволяет удалять или подменять записи до их передачи сборщику событий, что нарушает требование защиты от модификации (ТЗ 4.5.5, ТС 4.6.7).
+**Рекомендация:** Хранить journal.key в каталоге keys (доступ none) отдельно от записей журнала либо закрыть чтение каталога journal.
+**Основание:** ТЗ 4.5.5, ТС 4.5.4, ТС 4.6.7
+
+#### ИБ-05-a5e56c04 — ВЫСОКИЙ · подтверждено · источник: rule:ib05.pending_journal_writable_by_local_user
+
+**Где:** `portal/local_acl.py`, строка 32, `configure`
+
+```python
+    set_reader_access(runtime/'journal'/'pending','modify')
+```
+
+**Обоснование:** Каталог неотправленных записей журнала (runtime/'journal'/'pending') получает право modify для непривилегированных локальных субъектов: записи могут быть удалены или подменены до передачи сборщику событий (ТС 4.6.7 требует защиты от подмены и удаления).
+**Комментарий модели:** Подтверждаю: каталог pending доступен на изменение непривилегированным субъектам.
+**Рекомендация:** Выдавать на каталог pending только права владельца процесса и SYSTEM; непривилегированным субъектам — none.
+**Основание:** ТЗ 4.5.5, ТС 4.6.7
+
+### ИБ-07. Журналирование действий пользователей и событий СУБД (сквозное требование)
+
+> В проекте должен быть реализован единый журнал действий пользователей, имеющих доступ к данным, а также журнал событий системы управления базами данных. Журналирование должно охватывать проект в целом, а не отдельную функцию или отдельный программный модуль. Реализация журналирования в части функций, обеспечивающих доступ к данным, при отсутствии его в остальных, является нарушением.
+
+#### ИБ-07-0964d932 — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `demodesk/config/settings.py`, строка 15, `DATABASES`
+
+```python
+DATABASES = {'default': {'ENGINE':'django.db.backends.sqlite3', 'NAME': RUNTIME / 'helpdesk.sqlite3', 'OPTIONS': {'timeout': 30}}}
+```
+
+**Обоснование:** Журнал событий СУБД не реализован: нет обработчиков сигнала connection_created, трассировки SQLite (set_trace_callback), регистрации миграций (pre/post_migrate) или изменения прав на файл БД; логгер django.db не имеет обработчика. ТЗ ИБ-07 и ТС 4.6.5 требуют вести журнал событий СУБД (соединения, отказы, изменение структуры, права на файл БД).
+**Комментарий модели:** Подтверждаю: журнал событий СУБД отсутствует, нет обработчиков connection_created, миграций и т.д. Журнал событий СУБД не реализован: нет обработчиков connection_created, трассировки SQLite, регистрации миграций или изменения прав на файл БД. ТС 4.6.5 требует вести журнал событий СУБД.
+**Рекомендация:** Подключить connection_created для регистрации соединений, регистрировать миграции и команду db_access через общий аудит, включить трассировку DDL.
+**Основание:** ТЗ 4.5.7, ТС 4.6.5
+
+#### ИБ-07-320074b5 — ВЫСОКИЙ · подтверждено · источник: rule:ib07.read_access_not_logged
+
+**Где:** `portal/audit.py`, строка 8, `record`
+**Также:** `portal/views.py`:22 (ticket_list); `portal/views.py`:41 (ticket_detail); `portal/views.py`:85 (attachment); `portal/views.py`:185 (ticket_api); `portal/views.py`:202 (catalog_api)
+
+```python
+def record(action, obj, **details):
+    event = {'id':uuid.uuid4().hex, 'time':datetime.now(timezone.utc).isoformat(), 'actor':str(actor.get()), 'action':action, 'object':str(obj), 'details':details}
+    nonce = os.urandom(12)
+    payload = nonce + AESGCM(settings.LOG_KEY_FILE.read_bytes()).encrypt(nonce, json.dumps(event, sort_keys=True).encode(), b'journal')
+    folder = settings.RUNTIME / 'journal' / 'pending'
+    folder.mkdir(parents=True, exist_ok=True)
+    staging = folder / (event['id'] + '.tmp')
+    staging.write_bytes(payload)
+    staging.rename(folder / (event['id'] + '.evt'))
+    return event
+```
+
+**Обоснование:** Журналирование реализовано только через сигналы изменения данных и события входа: операции чтения — просмотр списков и карточек обращений, скачивание вложений, чтение через API — не регистрируются ни middleware, ни в представлениях. Незарегистрированные маршруты чтения (5):  → ticket_list (portal/views.py:22), tickets/<int:ticket_id>/ → ticket_detail (portal/views.py:41), attachments/<int:attachment_id>/ → attachment (portal/views.py:85), api/v1/tickets/ → ticket_api (portal/views.py:185), api/catalog/tickets/ → catalog_api (portal/views.py:202). Журнал не охватывает проект в целом (ТС 4.6.1, 4.6.4: просмотр списков, карточек, скачивание вложений, чтение через API подлежат регистрации).
+**Комментарий модели:** Подтверждаю: операции чтения не регистрируются ни middleware, ни в представлениях.
+**Рекомендация:** Регистрировать операции чтения общим компонентом (middleware на каждый запрос к защищённым маршрутам с типом операции, объектом и результатом) вместо точечных вызовов в отдельных функциях.
+**Основание:** ТЗ 4.5.7, ТС 4.6.1, ТС 4.6.2, ТС 4.6.4
+
+#### ИБ-07-ec7ff408 — ВЫСОКИЙ · подтверждено · источник: llm
+
+**Где:** `portal/views.py`, строка 22, `ticket_list`
+
+```python
+@login_required
+def ticket_list(request):
+    rows = list(access.tickets(request.user).select_related('queue').order_by('-modified'))
+    query = request.GET.get('q', '').strip().lower()
+    if query: rows = [r for r in rows if query in r.title.lower() or query in (r.description or '').lower()]
+
+    return render(request, 'portal/list.html', {'tickets':rows})
+```
+
+**Обоснование:** Операция чтения списка обращений не регистрируется: в представлении нет вызова audit.record, middleware не перехватывает GET-запросы. ТС 4.6.4 требует регистрировать просмотр списков.
+**Рекомендация:** Добавить middleware для регистрации всех GET-запросов к защищённым маршрутам с указанием типа операции, объекта и результата.
+
+#### ИБ-07-29d7c4f7 — ВЫСОКИЙ · подтверждено · источник: llm
+
+**Где:** `portal/views.py`, строка 41, `ticket_detail`
+
+```python
+@login_required
+def ticket_detail(request, ticket_id):
+    ticket = get_object_or_404(access.tickets(request.user), pk=ticket_id)
+    form = UpdateForm(request.POST or None, request.FILES or None, initial={'status':ticket.status})
+    if request.method == 'POST' and form.is_valid():
+        with transaction.atomic():
+            status = int(form.cleaned_data['status'])
+            if request.user.role == 'applicant' and status != ticket.status: raise PermissionDenied
+            before = ticket.status
+            ticket.status = status
+            ticket.save()
+            followup = FollowUp.objects.create(ticket=ticket, user=request.user, title='Обновление обращения', comment=form.cleaned_data['comment'], public=True if request.user.role=='applicant' else form.cleaned_data['public'], new_status=status)
+            if before != status:
+                TicketChange.objects.create(followup=followup, field='status', old_value=str(before), new_value=str(status))
+            f = form.cleaned_data['attachment']
+            if f:
+                FollowUpAttachment.objects.create(followup=followup, file=f, filename=Path(f.name).name, size=f.size, mime_type='application/octet-stream')
+        return redirect('helpdesk:view', ticket.pk)
+    …
+```
+
+**Обоснование:** Просмотр карточки обращения не регистрируется: отсутствует вызов audit.record, middleware не логирует чтение. ТС 4.6.4 требует регистрацию просмотра карточек.
+**Рекомендация:** Регистрировать просмотр карточки через middleware или явный вызов audit.record.
+
+#### ИБ-07-b2670ee7 — ВЫСОКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/views.py`, строка 81
+
+```python
+    selected.update(status=status)
+```
+
+**Обоснование:** Пакетное изменение данных `selected.update(status=status)` выполняется через QuerySet.update(): сигналы post_save не срабатывают, механизм аудита это изменение не регистрирует. ТС 4.6.4 требует регистрировать пакетную смену статусов с указанием затронутых обращений.
+**Комментарий модели:** Подтверждаю: пакетное обновление через QuerySet.update() не вызывает сигналы и не регистрируется. Пакетное обновление статусов через QuerySet.update() не вызывает сигналы post_save, поэтому не регистрируется. ТС 4.6.4 требует регистрацию пакетных операций с перечнем затронутых объектов.
+**Рекомендация:** Регистрировать пакетную операцию явно (audit.record с перечнем идентификаторов) либо выполнять изменения через save() каждого объекта.
+**Основание:** ТЗ 4.5.7, ТС 4.6.4, ТС 4.6.6
+
+#### ИБ-07-02b4d9fa — ВЫСОКИЙ · подтверждено · источник: llm
+
+**Где:** `portal/views.py`, строка 85, `attachment`
+
+```python
+@login_required
+def attachment(request, attachment_id):
+    f = get_object_or_404(FollowUpAttachment, pk=attachment_id, followup__ticket__in=access.tickets(request.user))
+    if request.user.role == 'applicant' and not f.followup.public: raise PermissionDenied
+
+    return FileResponse(f.file.open('rb'), as_attachment=True, filename=f.filename, content_type='application/octet-stream')
+```
+
+**Обоснование:** Скачивание вложения не регистрируется: нет вызова audit.record, middleware не логирует чтение файлов. ТС 4.6.4 требует регистрацию скачивания вложений.
+**Рекомендация:** Добавить регистрацию скачивания вложения с идентификатором объекта и пользователя.
+
+#### ИБ-07-abb28d34 — ВЫСОКИЙ · подтверждено · источник: llm
+
+**Где:** `portal/views.py`, строка 185, `ticket_api`
+
+```python
+@csrf_exempt
+def ticket_api(request, ticket_id=None):
+    try: user = token_user(request)
+    except (signing.BadSignature, KeyError, ValueError, User.DoesNotExist): return JsonResponse({'error':'authentication required'},status=401)
+    token = ***)
+    try:
+        if request.method != 'GET': return JsonResponse({'error':'method not allowed'},status=405)
+        qs = access.tickets(user)
+        if ticket_id is not None:
+            row = get_object_or_404(qs,pk=ticket_id)
+
+            return JsonResponse(serialize_ticket(row))
+        rows = list(qs)
+
+        return JsonResponse({'tickets':[serialize_ticket(t) for t in rows]})
+    finally: audit.actor.reset(token)
+```
+
+**Обоснование:** Чтение через API не регистрируется: в представлении нет вызова audit.record, middleware не логирует API-запросы. ТС 4.6.4 требует регистрацию чтения через API.
+**Рекомендация:** Регистрировать API-запросы на чтение с указанием пользователя, объекта и результата.
+
+#### ИБ-07-65ef7755 — ВЫСОКИЙ · подтверждено · источник: llm
+
+**Где:** `portal/views.py`, строка 202, `catalog_api`
+
+```python
+@require_GET
+def catalog_api(request):
+    rows = list(Ticket.objects.all())
+
+    return JsonResponse({'tickets':[serialize_ticket(t) for t in rows]})
+```
+
+**Обоснование:** Чтение каталога обращений через API не регистрируется: нет вызова audit.record, middleware не логирует. ТС 4.6.4 требует регистрацию чтения через API.
+**Рекомендация:** Добавить регистрацию чтения каталога через middleware или явный вызов audit.record.
+
+#### ИБ-07-8d0e7036 — СРЕДНИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/middleware.py`, строка 2
+
+```python
+class ActorMiddleware:
+    def __init__(self, get_response): self.get_response = get_response
+    def __call__(self, request):
+        token = *** if request.user.is_authenticated else 'anonymous')
+        try: return self.get_response(request)
+        finally: actor.reset(token)
+```
+
+**Обоснование:** Отказы в доступе к защищённым операциям (PermissionDenied/403) нигде не регистрируются в журнале аудита: нет обработчика исключений или middleware, записывающего событие отказа (ТС 4.6.4).
+**Комментарий модели:** Подтверждаю: отказы в доступе не регистрируются, middleware не обрабатывает исключения. Отказы в доступе (PermissionDenied/403) не регистрируются: middleware не обрабатывает исключения, нет записи события отказа. ТС 4.6.4 требует регистрацию отказов в доступе.
+**Рекомендация:** В middleware (process_exception) или обработчике 403 записывать событие отказа с идентификатором пользователя, объектом и маршрутом.
+**Основание:** ТЗ 4.5.7, ТС 4.6.4
+
+### ИБ-08. Контроль выгрузки персональных данных
+
+> Выгрузка данных, содержащих персональные сведения, должна быть доступна исключительно пользователям с ролью «администратор». Каждый факт выгрузки должен фиксироваться записью в журнале аудита. Отсутствие проверки роли либо отсутствие записи в журнале аудита при выполнении выгрузки является нарушением.
+
+#### ИБ-08-1ed2a838 — КРИТИЧЕСКИЙ · подтверждено · источник: rule+llm
+
+**Где:** `portal/views.py`, строка 163, `export_json`
+
+```python
+@login_required
+@require_GET
+def export_json(request):
+    rows = people_rows()
+    response = JsonResponse({'people':rows,'generated_at':int(time.time())})
+    response['Content-Disposition'] = 'attachment; filename="people.json"'
+    response['Cache-Control'] = 'no-store'
+    return response
+```
+
+**Обоснование:** Маршрут `exports/people.json` (export_json) выгружает персональные данные пользователей (через people_rows()): роль «администратор» на сервере не проверяется — выгрузка доступна любому аутентифицированному пользователю (только login_required); факт выгрузки не фиксируется в журнале аудита (нет вызова audit.record / аналогичного). Декораторы: login_required, require_GET.
+**Комментарий модели:** Подтверждаю: export_json не имеет проверки роли администратора и не пишет аудит. Функция export_json выгружает персональные данные пользователей через people_rows(), но не имеет декоратора проверки роли администратора (только login_required) и не вызывает audit.record для фиксации факта выгрузки. Это нарушает требование ИБ-08: выгрузка должна быть доступна только администраторам и каждый факт должен фиксироваться в журнале аудита.
+**Рекомендация:** Защитить выгрузку тем же серверным декоратором роли администратора, что и остальные форматы выгрузки, и записывать событие выгрузки в аудит с датой, инициатором, форматом и числом записей.
+**Основание:** ТЗ 4.5.8, ТС 4.7.2, ТС 4.7.3
+
+## Несоответствия технической спецификации и иные замечания (не блокируют пайплайн)
+
+- **session-auth-detail** [средний] — `demodesk/config/settings.py`:10: Не найден механизм ограничения неуспешных попыток входа и временной блокировки (ТС 4.4.6: не более 5 попыток для учётной записи и ограничение по источнику в течение 15 минут, с сохранением при перезапуске). Проверены все 10 элементов INSTALLED_APPS и 9 элементов MIDDLEWARE на axes/ratelimit/defender/lockout/throttl/brute — совпадений нет. Рекомендация: подключить django-axes или аналогичный серверный механизм с хранением счётчиков в БД.
+- **session-auth-detail** [средний] — `demodesk/config/settings.py`:17: AUTH_PASSWORD_VALIDATORS не обеспечивает парольную политику ТС 4.4.8 (и 4.4.8: смена и сброс пароля должны препятствовать использованию старых данных): отсутствует отклонение распространённых паролей (CommonPasswordValidator); отклонение полностью числовых паролей (NumericPasswordValidator); запрет повторного использования прежнего пароля. Сейчас настроено: django.contrib.auth.password_validation.MinimumLengthValidator.
+- **session-auth-detail** [средний] — `portal/views.py`:115: `change_role` изменяет роль или пароль пользователя, но не отзывает ранее выданные токены доступа и сессии (ТС 4.4.7, 4.3.5): токен API, выданный до изменения, продолжает действовать до истечения срока.
+- **session-auth-detail** [средний] — `portal/views.py`:135: `reset_password` изменяет роль или пароль пользователя, но не отзывает ранее выданные токены доступа и сессии (ТС 4.4.7, 4.3.5): токен API, выданный до изменения, продолжает действовать до истечения срока.
+- **data-handling-detail** [низкий] — `src/helpdesk/models.py`:1885: Модель `TicketCC` хранит копии персональных данных открытым текстом: email (ТС 4.5.1 относит копии ПД в обращениях к защищаемым данным).
+- **audit-detail** [средний] — `collector.py`:11: Сборщик событий не изолирует повреждённые записи: исключение при расшифровке одной записи прерывает обработку остальных (ТС 4.6.7 требует изоляции повреждённых записей без остановки обработки).
+- **audit-detail** [низкий] — `portal/management/commands/seed_workload.py`:223: Изменение данных в обход сигналов аудита: `Ticket.objects.filter(pk=ticket.pk).update(created=created, modified=followups[-1].date)` (QuerySet.update()) — событие не регистрируется.
+- **access-control-detail** [низкий] — `portal/access.py`:29: `queues` определяет доступные оператору очереди через get_all_permissions(), которое включает права групп: членство в группе расширяет область доступа оператора, что запрещено ТС 4.3.2 (права на очереди выдаются явно).
+- **data-handling-detail** [средний] — `portal/forms.py`:16: `clean_attachment` проверяет вложение только по расширению и размеру; соответствие содержимого заявленному формату и отсутствие активного содержимого не проверяются (ТС 4.11.2 требует проверку содержимого в изолированном процессе).
+- **access-control-detail** [средний] — `portal/views.py`:115: `change_role` изменяет роль пользователя, но не снимает ранее выданные права на очереди (user_permissions не очищаются) — бывший оператор, переведённый в заявители, сохраняет права (ТС 4.3.5).
+- **access-control-detail** [средний] — `portal/views.py`:127: `grant_queue` выдаёт право на очередь (user_permissions.add) без проверки, что получатель имеет роль «оператор» (ТС 4.3.5: право на очередь выдаётся только учётным записям с ролью «оператор»).
+- **export-detail** [низкий] — `portal/views.py`:154: `export_csv`: экранирование формул в CSV не учитывает префиксы табуляции и возврата каретки (\t, \r), которые табличные редакторы также интерпретируют (ТС 4.7.4).
+- **audit-detail** [средний] — `portal/audit.py`:8: Запись журнала аудита (`record`) не содержит обязательных по ТС 4.6.3 полей: результат операции, идентификатор запроса, идентификатор источника запроса.
+- **audit-detail** [средний] — `portal/audit.py`:23: События изменения данных пишутся в журнал непосредственно из сигналов post_save/post_delete, без transaction.on_commit: при откате транзакции в журнале остаётся событие успешной операции (ТС 4.6.6).
+- **transport-detail** [низкий] — `demodesk/config/settings.py`:10: Приложение `helpdesk` включено в INSTALLED_APPS, но его маршруты не подключены к ROOT_URLCONF; при этом WhiteNoise раздаёт статику всех приложений (collectstatic), включая `src/helpdesk/static` — статические ресурсы неподключённых библиотечных компонентов не должны обслуживаться (ТС 4.9.3).
+- **session-auth-detail** [средний] — `portal/views.py`:173: Токен выдаётся с полем exp, но при смене роли (change_role) или пароля (reset_password) ранее выданные токены не отзываются, что не соответствует ТС 4.4.7 (отзыв токенов при смене пароля/роли).
+
+## Ограничения проверки
+
+Ограничений не зафиксировано.
+
+## Ресурсы
+
+- Вызовов модели: 7; токенов: запрос 106322, ответ 6628, всего 112950; повторов: 0
+- Длительность проверки: 32 с (лимит 1500 с)
