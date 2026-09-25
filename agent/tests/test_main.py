@@ -259,6 +259,24 @@ class ReportUnitTests(unittest.TestCase):
         self.assertIn("sk-***", report_mod.redact("key sk-abcdefghijklmnop"))
         self.assertEqual(report_mod.redact("SESSION_COOKIE_SECURE = False"), "SESSION_COOKIE_SECURE = False")
 
+    def test_redaction_keeps_code_expressions_but_masks_secrets(self):
+        # прогон 36042637087: эти строки кода проверяемого проекта были испорчены в отчёте (`token = ***)`)
+        for code in ("token = audit.actor.set(user.pk)",                                                # portal/views.py:188
+                     "token = actor.set(request.user.pk if request.user.is_authenticated else 'anonymous')",  # portal/middleware.py:5
+                     "token = None", "secret = settings.secret_key", "token = tokens[0]"):
+            with self.subTest(code=code):
+                self.assertEqual(report_mod.redact(code), code)
+        # настоящие секреты по-прежнему маскируются — исправление не должно давать пропусков
+        for secret, value in (('token = "sk-abc123"', "sk-abc123"), ("token = 'abc123xyz'", "abc123xyz"),
+                              ("SECRET_KEY=django-insecure-abc123xyz", "django-insecure-abc123xyz"),
+                              ("api_key=AbCdEf123456", "AbCdEf123456"), ("password: hunter2hunter", "hunter2hunter"),
+                              ("token=eyJhbGciOiJIUzI1NiJ9.payload.sig", "eyJhbGciOiJIUzI1NiJ9"),
+                              ("header eyJhbGciOiJIUzI1NiJ9.eyJ1aWQiOjF9.abc", "eyJ1aWQiOjF9")):
+            with self.subTest(secret=secret):
+                out = report_mod.redact(secret)
+                self.assertNotIn(value, out)
+                self.assertIn("***", out)
+
 
 EXHAUSTED = {"content": None, "reasoning_content": "рассуждаю…", "finish_reason": "length",
              "reasoning_tokens": 8192, "completion_tokens": 8192}

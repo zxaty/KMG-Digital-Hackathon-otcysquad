@@ -32,8 +32,28 @@ STATUS_ICON = {"pass": "✅", "violation": "❌", "insufficient_data": "⚠️",
 # Редактирование секретов
 # ---------------------------------------------------------------------------
 
+# «ключ = значение»: значение в кавычках маскируется всегда; значение без кавычек — только если
+# это не выражение кода (иначе строки вида `token = actor.set(user.pk)` портились бы в отчёте).
+_KEY_VALUE_RE = re.compile(r"(?i)\b(password|passwd|pwd|secret|secret_key|api[_-]?key|token|access[_-]?key|private[_-]?key)"
+                           r"(\s*[:=]\s*)(['\"]?)([^'\"\s,;()\[\]]{4,})")
+_CODE_LITERALS = {"none", "true", "false", "null"}
+_ATTRIBUTE_PATH_RE = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+")   # request.user.pk, settings.secret_key
+
+
+def _mask_key_value(m: re.Match) -> str:
+    key, sep, quote, value = m.group(1), m.group(2), m.group(3), m.group(4)
+    if not quote:
+        following = m.string[m.end():m.end() + 1]
+        is_code = (following in ("(", "[") or bool(_ATTRIBUTE_PATH_RE.fullmatch(value))
+                   or value.lower() in _CODE_LITERALS)
+        if is_code:
+            return m.group(0)
+    return f"{key}{sep}{quote}***"
+
+
 _SECRET_PATTERNS = [
-    (re.compile(r"(?i)\b(password|passwd|pwd|secret|secret_key|api[_-]?key|token|access[_-]?key|private[_-]?key)(\s*[:=]\s*)(['\"]?)([^'\"\s,;)]{4,})"), r"\1\2\3***"),
+    (_KEY_VALUE_RE, _mask_key_value),
+    (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"), "***jwt***"),   # JWT в любом контексте
     (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9\-_.=:+/]{8,}"), "Bearer ***"),
     (re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}"), "sk-***"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AKIA***"),

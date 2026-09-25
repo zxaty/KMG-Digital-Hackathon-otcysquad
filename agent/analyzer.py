@@ -745,10 +745,18 @@ def analyze_requirement(
     merged: list[Violation] = list(final_rules)
     for lv in kept:
         dup = next((rv for rv in merged if _same_place(rv.location, lv.location)), None)
+        via_related = False
+        if dup is None:
+            # то же место уже перечислено в related_locations находки правил этого требования
+            # (например, ИБ-07: «чтение не журналируется» со списком маршрутов) — не отдельное нарушение
+            dup = next((rv for rv in merged if rv.source.startswith("rule")
+                        and any(_same_place(rl, lv.location) for rl in (rv.related_locations or []) if isinstance(rl, dict))), None)
+            via_related = dup is not None
         if dup is not None:
             dup.source = "rule+llm" if dup.source.startswith("rule") else dup.source
             if lv.justification and lv.justification not in dup.justification:
-                dup.llm_comment = (dup.llm_comment + " " if dup.llm_comment else "") + lv.justification
+                note = (f"[{lv.location.get('file')}:{lv.location.get('line')}] " if via_related else "") + lv.justification
+                dup.llm_comment = (dup.llm_comment + " " if dup.llm_comment else "") + note
             if dup.confidence != "confirmed" and lv.confidence == "confirmed":
                 dup.confidence = "confirmed"
             continue

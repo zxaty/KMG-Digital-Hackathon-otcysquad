@@ -184,6 +184,31 @@ class AnalyzerAgainstRealIndexTests(unittest.TestCase):
         self.assertIsNone(result.insufficient_data_reason)          # нет противоречивой пары violation + insufficient
         self.assertIn("нераспознанный статус 'banana'", result.analysis_warning)
 
+    def test_llm_findings_on_rule_related_locations_are_merged_not_duplicated(self):
+        # прогон 36042637087: правило ИБ-07 «чтение не журналируется» перечисляло 5 маршрутов в related_locations,
+        # а модель добавила по отдельному нарушению на каждый из них — одна проблема была посчитана 6 раз
+        findings = [f for f in rules.run_rules(self.index, PROJECT_ROOT).findings if f.requirement_id == "IB-07"]
+        read_rule = next(f for f in findings if f.rule_id == "ib07.read_access_not_logged")
+        routes = [(rl["line"], rl["function"]) for rl in read_rule.related_locations]
+        self.assertEqual(routes, [(22, "ticket_list"), (41, "ticket_detail"), (85, "attachment"), (185, "ticket_api"), (202, "catalog_api")])
+        model_violations = [{"location": {"file": "portal/views.py", "line": line, "function": fn},
+                             "justification": f"чтение в {fn} не регистрируется", "severity": "high",
+                             "confidence": "confirmed", "recommendation": "журналировать чтение"} for line, fn in routes]
+        model_violations.append({"location": {"file": "portal/views.py", "line": 163, "function": "export_json"},
+                                 "justification": "выгрузка не регистрируется", "severity": "high",
+                                 "confidence": "confirmed", "recommendation": "журналировать выгрузку"})
+        result = analyzer.analyze_requirement("IB-07", self.index, self._scripted(status="violation", violations=model_violations),
+                                              PROJECT_ROOT, rule_findings=findings)
+        self.assertEqual(result.status, "violation")
+        self.assertEqual(len(result.violations), len(findings) + 1)          # правила + только export_json
+        by_rule = {v.rule_id: v for v in result.violations if v.rule_id}
+        merged = by_rule["ib07.read_access_not_logged"]
+        self.assertEqual(merged.source, "rule+llm")
+        for line, fn in routes:
+            self.assertIn(f"[portal/views.py:{line}] чтение в {fn} не регистрируется", merged.llm_comment)
+        extra = [v for v in result.violations if v.source == "llm"]
+        self.assertEqual([(v.location["line"], v.location["function"]) for v in extra], [(163, "export_json")])
+
     def test_explicit_pass_is_still_pass(self):
         result = analyzer.analyze_requirement("IB-07", self.index, self._scripted(status="pass"), PROJECT_ROOT)
         self.assertEqual(result.status, "pass")
